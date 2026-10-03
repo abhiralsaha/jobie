@@ -1,0 +1,290 @@
+JOBIE: SETUP, TESTING, AND OPERATION GUIDE
+=========================================
+
+1. WHAT THIS PROJECT DOES
+-------------------------
+
+Jobie monitors job listings for configured search terms and location, stores
+matching listings in the repository's SQLite database, and sends job
+notifications to Telegram through the Bot API.
+
+The LinkedIn worker:
+- Searches LinkedIn's public guest job-search results without a LinkedIn login.
+- Polls every 120 seconds by default.
+- Checks postings up to 24 hours old and pages through at most five result pages
+  per poll by default (up to about 125 results before duplicate pages).
+- Sends an immediate Telegram alert for a newly discovered job posted within
+  the last 180 seconds by default.
+- Stores retrieved job IDs, titles, companies, links, and posting timestamps in
+  jobie.db in the repository root.
+- Sends one Telegram digest per local calendar day at the configured time. The
+  digest contains stored listings whose posting timestamp is within the last
+  24 hours. Long digests are split into several messages.
+- Optionally sends rolling digests through separate Telegram bots at startup and
+  every 5 minutes, 15 minutes, 30 minutes, 1 hour, and 10 hours. Each contains
+  found listings posted within that bot's time window.
+- Provides a protected endpoint to request a digest immediately, limited to
+  three requests per local day and one request every five minutes by default.
+- Provides a health endpoint showing safe operational timestamps and whether
+  polling is healthy, without exposing job data or credentials.
+
+The LinkedIn guest endpoint is not an official LinkedIn API. It may change,
+return incomplete results, or restrict requests. Follow the source site's terms.
+The page limit means Jobie cannot promise an exhaustive list of every job.
+
+Jobie does not log in to LinkedIn, apply for jobs, fill forms, submit applications,
+or bypass access controls. Search and notification work automatically after
+setup, but Telegram bot and search settings must be configured once. The candidate
+profile file is not used by the job monitor and is not required for this workflow.
+
+
+2. REQUIREMENTS
+---------------
+
+- Windows PowerShell.
+- Python 3.10 or newer.
+- A Telegram bot token and your Telegram chat ID.
+- Internet access to reach the Telegram Bot API and public guest search endpoint.
+
+No LinkedIn username, password, cookie, or browser session is required.
+
+
+3. FIRST-TIME INSTALLATION AND CONFIGURATION
+--------------------------------------------
+
+Run these commands from the repository folder:
+
+    cd C:\Users\abhiral\Desktop\jobie
+    python -m venv .venv
+    .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+Create .env only if it does not already exist, then open it:
+
+    if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+    notepad .env
+
+Generate a strong API token:
+
+    .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"
+
+Put the generated value in JOBIE_API_TOKEN. It must be at least 32 characters.
+Keep it private. Do not put real credentials in this guide, .env.example, logs,
+or source control. The repository ignores .env and the SQLite database.
+
+Edit these settings in .env:
+
+    JOBIE_API_TOKEN=<generated-long-random-token>
+    TELEGRAM_BOT_TOKEN=<token-from-BotFather>
+    TELEGRAM_CHAT_ID=<your-Telegram-chat-ID>
+    TELEGRAM_DIGEST_BOT_TOKEN=<second-bot-token-from-BotFather>
+    TELEGRAM_DIGEST_CHAT_ID=<second-bot-private-chat-ID>
+    TELEGRAM_DIGEST_INTERVAL_HOURS=10
+    TELEGRAM_DIGEST_5M_BOT_TOKEN=<bot-token-from-BotFather>
+    TELEGRAM_DIGEST_5M_CHAT_ID=<private-chat-ID>
+    TELEGRAM_DIGEST_15M_BOT_TOKEN=<bot-token-from-BotFather>
+    TELEGRAM_DIGEST_15M_CHAT_ID=<private-chat-ID>
+    TELEGRAM_DIGEST_30M_BOT_TOKEN=<bot-token-from-BotFather>
+    TELEGRAM_DIGEST_30M_CHAT_ID=<private-chat-ID>
+    TELEGRAM_DIGEST_1H_BOT_TOKEN=<bot-token-from-BotFather>
+    TELEGRAM_DIGEST_1H_CHAT_ID=<private-chat-ID>
+    LINKEDIN_SEARCH_KEYWORDS=software engineer
+    LINKEDIN_SEARCH_LOCATION=Gurugram, Haryana, India
+    LINKEDIN_POLL_INTERVAL_SECONDS=120
+    LINKEDIN_LOOKBACK_HOURS=24
+    LINKEDIN_MAX_SEARCH_PAGES=5
+    RECENT_JOB_WINDOW_SECONDS=180
+    DAILY_DIGEST_TIME=18:00
+    DAILY_DIGEST_TIMEZONE=Asia/Kolkata
+    MANUAL_DIGEST_MAX_PER_DAY=3
+    MANUAL_DIGEST_COOLDOWN_SECONDS=300
+
+Create a bot with [@BotFather](https://t.me/BotFather), put its token in
+`TELEGRAM_BOT_TOKEN`, open the bot in Telegram, and send `/start`. To retrieve
+your private chat ID without exposing the token in this guide, run this locally
+from the repository folder:
+
+  $botToken = (Select-String -Path .env -Pattern '^TELEGRAM_BOT_TOKEN=').Line.Substring('TELEGRAM_BOT_TOKEN='.Length)
+  $updates = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates"
+  $updates.result | ForEach-Object { if ($_.message.chat.type -eq 'private') { [pscustomobject]@{ chat_id = $_.message.chat.id; username = $_.message.chat.username } } }
+
+Copy your `chat_id` into `TELEGRAM_CHAT_ID`. Keep the bot token private. Jobie
+sends messages only; it does not process replies and needs no public webhook or
+ngrok tunnel.
+
+For every rolling digest, create a separate bot with @BotFather, open it, and
+send `/start`. To retrieve a bot's private chat ID, use that bot's token from
+`.env` in the same `getUpdates` command above, substituting the matching token
+variable name. For example, use `TELEGRAM_DIGEST_5M_BOT_TOKEN` to get the ID for
+`TELEGRAM_DIGEST_5M_CHAT_ID`; repeat for the 15M, 30M, 1H, and 10-hour bots.
+
+The worker sends each enabled digest after the startup search, then repeats at
+that bot's interval. The five-minute bot may send slightly after its deadline
+because LinkedIn searches run every two minutes. Leave both settings in a bot
+pair empty to disable that digest.
+
+Daily time uses 24-hour HH:MM format. Use a valid IANA timezone, for example:
+Asia/Kolkata, America/New_York, or Europe/London. The default is 18:00 in
+Asia/Kolkata. Windows timezone data is installed from requirements.txt.
+
+The authorized-feed settings are for a separate feed connector and are not
+required for the LinkedIn worker.
+
+
+4. START THE AUTOMATIC LINKEDIN WORKER
+--------------------------------------
+
+The worker itself is a FastAPI service. Start it from the repository folder:
+
+    .\.venv\Scripts\python.exe -m uvicorn app.linkedin_fresh_jobs:app --host 127.0.0.1 --port 8000
+
+Keep this PowerShell window open. The worker requires a 32-character-or-longer
+JOBIE_API_TOKEN, TELEGRAM_BOT_TOKEN, and TELEGRAM_CHAT_ID. Rolling digest bots
+are optional. If a rolling bot has a missing or malformed token/chat pair, Jobie
+skips only that bot and continues with the other configured bots.
+
+The worker searches immediately at startup and then waits the configured poll
+interval. Immediate Telegram alerts are sent only for new jobs within the
+RECENT_JOB_WINDOW_SECONDS window. The daily digest runs on the first poll at or
+after DAILY_DIGEST_TIME, so delivery can be delayed by up to one poll interval.
+Keep the worker running through the scheduled time. A stored send record prevents
+the scheduled digest from repeating on the same local calendar day after a
+restart.
+
+Check worker readiness and recent poll status at:
+
+  Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
+
+The health endpoint returns HTTP 503 before the first successful poll or when
+polling has gone stale. Otherwise it returns safe timestamps, the last poll's
+result count, and the last error type. It does not expose job details or secrets.
+
+The 24-hour digest covers listings successfully found and stored by the worker;
+it is not a guarantee that LinkedIn returned every matching job. The configured
+page limit is capped at ten pages by the worker. The default five pages is at
+most about 125 results per poll, and overlapping pages can reduce that number.
+
+
+5. TEST THE SEARCH RESULTS ENDPOINT
+-----------------------------------
+
+Open a second PowerShell window in the repository folder and read the API token
+from .env for this shell session:
+
+    $apiToken = (Select-String -Path .env -Pattern '^JOBIE_API_TOKEN=').Line.Substring('JOBIE_API_TOKEN='.Length)
+    $headers = @{ Authorization = "Bearer $apiToken" }
+
+Read recent in-memory search results without clearing them:
+
+    Invoke-RestMethod -Uri 'http://127.0.0.1:8000/fresh-jobs?peek=true' -Headers $headers
+
+This returns a count and job objects with title, company, location, posting time,
+and link. The buffer is in memory and resets if the process restarts. Omitting
+peek=true clears the buffer after reading. The daily digest uses SQLite, not this
+temporary buffer.
+
+An empty result is possible when no matching jobs were returned in the search
+window, the source endpoint is unavailable, or the search terms/location are too
+specific. Check logs\jobie.log for poll errors. Do not try to bypass blocks or
+challenges; the endpoint is not guaranteed to remain available.
+
+
+6. TEST THE 24-HOUR DIGEST
+--------------------------
+
+IMPORTANT: This endpoint sends real Telegram messages to TELEGRAM_CHAT_ID when
+matching jobs are found. If the 24-hour list is empty, it sends no message and
+reports zero message parts. Verify the chat ID and Telegram settings first.
+
+With the worker running, use the same PowerShell session and token from section 5:
+
+    Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/digest/send' -Headers $headers
+
+The response reports the number of jobs and Telegram message parts sent. A long
+digest is split into multiple messages. The on-demand endpoint can be called
+whenever wanted; it does not mark or replace the scheduled daily digest.
+To prevent accidental repeated messages and provider charges, on-demand sends are
+limited to three per local day and one every five minutes by default. Configure
+MANUAL_DIGEST_MAX_PER_DAY and MANUAL_DIGEST_COOLDOWN_SECONDS in .env to change
+these limits. Reservations persist in SQLite across worker restarts; failed
+delivery attempts also consume a reservation.
+
+To test the scheduled send, set DAILY_DIGEST_TIME to a time a few minutes ahead
+in the timezone selected by DAILY_DIGEST_TIMEZONE, restart the worker, and leave
+it running. Restore your normal time after the test. The scheduled digest is
+sent once per local calendar date.
+
+
+7. CHECK SQLITE AND LOGS
+------------------------
+
+The job database is jobie.db in the repository root. The LinkedIn worker creates
+or migrates the seen_jobs table and creates digest_runs. To inspect counts without
+printing job details, run:
+
+    .\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('jobie.db'); print('seen_jobs:', c.execute('SELECT COUNT(*) FROM seen_jobs').fetchone()[0]); print('digest_runs:', c.execute('SELECT COUNT(*) FROM digest_runs').fetchone()[0]); c.close()"
+
+Operational messages are written to logs\jobie.log. Avoid sharing logs publicly;
+keep credentials out of them.
+
+
+8. OPTIONAL: TEST THE IMPORT API
+-------------------------------------------------------------
+
+The separate import API supports authorized manual or feed imports. Start it on
+port 8001 if the LinkedIn worker is already using port 8000:
+
+    .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+
+  Check that API separately with:
+
+    Invoke-RestMethod -Uri 'http://127.0.0.1:8001/health'
+
+To test authentication and duplicate handling without triggering a Telegram
+alert, submit a job without posted_at (it defaults to empty and is not recent):
+
+    $apiToken = (Select-String -Path .env -Pattern '^JOBIE_API_TOKEN=').Line.Substring('JOBIE_API_TOKEN='.Length)
+    $job = @{
+        job_id = "manual-test-$([guid]::NewGuid())"
+        title = "Jobie import test"
+        company = "Example company"
+        url = "https://example.com/jobs/test"
+        source = "manual_test"
+    } | ConvertTo-Json
+    Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8001/jobs/import' -Headers @{ Authorization = "Bearer $apiToken" } -ContentType 'application/json' -Body $job
+
+The first request should report imported=true and recent=false. Submitting the
+same job_id again should report duplicate=true. Requests without the bearer token
+are rejected. Use HTTPS job URLs.
+
+9. COMMON PROBLEMS
+------------------
+
+- Worker stops immediately: check JOBIE_API_TOKEN length, Telegram bot token/chat ID,
+  sender/recipient settings, DAILY_DIGEST_TIME, and DAILY_DIGEST_TIMEZONE.
+- No Telegram message arrives: verify TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, that
+  you sent `/start` to the bot, and logs\jobie.log.
+- No matching jobs: check LINKEDIN_SEARCH_KEYWORDS and LINKEDIN_SEARCH_LOCATION.
+  Results depend on the public endpoint and the configured page limit.
+- Digest has no jobs: the worker may not have found any listings within the last
+  LINKEDIN_LOOKBACK_HOURS, or no results may have been stored yet.
+- Wrong digest time: check DAILY_DIGEST_TIME uses HH:MM and the timezone is a
+  valid IANA name. The service must be running when the scheduled time passes.
+- API returns 401: ensure the request uses `Authorization: Bearer <JOBIE_API_TOKEN>`
+  and that the token in .env is at least 32 characters.
+- Do not bind an unauthenticated development server to a public interface. Keep
+  .env private, use HTTPS remotely, and restrict access with a firewall or trusted
+  reverse proxy.
+
+
+10. QUICK CODE CHECK
+--------------------
+
+Run the automated unit tests first. They use temporary SQLite databases and
+mocked Telegram HTTP calls; they do not contact LinkedIn or send real Telegram
+messages:
+
+  .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+
+Then check Python syntax. This also does not contact external services:
+
+    .\.venv\Scripts\python.exe -m compileall -q app scripts

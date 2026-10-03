@@ -1,0 +1,5 @@
+Sorry, your request failed. Please try again.
+
+Client Request Id: 38cc71c4-5d70-4891-a49f-7487c7b64f7a
+
+Reason: Request Failed: 400 {"type":"error","error":{"type":"api_error","message":"messages: at least one message is required"}}: Error: Request Failed: 400 {"type":"error","error":{"type":"api_error","message":"messages: at least one message is required"}} at xH._provideLanguageModelResponse (c:\Users\abhiral\AppData\Local\Programs\Microsoft VS Code\04c0d99f4f\resources\app\extensions\copilot\dist\extension.js:1614:15818) at process.processTicksAndRejections (node:internal/process/task_queues:104:5) at async xH.provideLanguageModelResponse (c:\Users\abhiral\AppData\Local\Programs\Microsoft VS Code\04c0d99f4f\resources\app\extensions\copilot\dist\extension.js:1614:16971)

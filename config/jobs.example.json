@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "job_id": "authorized-example-123",
+      "title": "Backend Engineer",
+      "company": "Example Inc",
+      "url": "https://example.com/jobs/authorized-example-123",
+      "posted_at": "2020-01-01T00:00:00Z",
+      "source": "authorized_example_feed"
+    }
+  ]
+}

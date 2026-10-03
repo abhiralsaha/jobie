@@ -1,0 +1,18 @@
+{
+  "name": "Jane Doe",
+  "resume_path": "./resume.pdf",
+  "email": "jane@example.com",
+  "phone": "+1-555-123-4567",
+  "location": "New York, NY",
+  "years_experience": "5",
+  "visa_status": "US citizen",
+  "salary_expectation": "$120,000",
+  "work_authorization": "Authorized to work in the US",
+  "professional_summary": "Experienced software engineer focused on backend systems and distributed platforms.",
+  "questions": {
+    "years_of_experience": "5",
+    "willing_to_relocate": "Yes",
+    "open_to_remote": "Yes",
+    "need_sponsorship": "No"
+  }
+}
