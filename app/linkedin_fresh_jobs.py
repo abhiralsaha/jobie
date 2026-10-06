@@ -598,6 +598,22 @@ app.add_middleware(
 )
 
 
+def record_keep_alive_ping() -> dict:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO keep_alive_pings DEFAULT VALUES RETURNING id, received_at"
+            )
+            return dict(cur.fetchone())
+
+
+@app.post("/keep-alive")
+async def keep_alive(authorization: str | None = Header(default=None)) -> dict:
+    require_api_bearer_token(authorization, settings.JOBIE_API_TOKEN)
+    ping = await asyncio.to_thread(record_keep_alive_ping)
+    return {"status": "ok", "ping": ping}
+
+
 @app.get("/api/jobs")
 async def get_all_jobs(limit: int = Query(300, ge=1, le=1000)) -> dict:
     """Returns stored seen_jobs directly from the Supabase PostgreSQL database."""

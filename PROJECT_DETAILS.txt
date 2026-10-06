@@ -63,7 +63,7 @@ There are two different FastAPI applications:
 A. LinkedIn worker: app.linkedin_fresh_jobs:app
    - Default local address: http://127.0.0.1:8000
    - Starts a background polling task during FastAPI startup.
-   - Owns /health, /fresh-jobs, and /digest/send.
+   - Owns /health, /fresh-jobs, /digest/send, and authenticated /keep-alive.
   - Uses the public guest-search endpoint, SQLite, and Telegram.
 
 B. Import API: app.main:app

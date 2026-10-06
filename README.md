@@ -45,6 +45,33 @@ Render's Application logs also include one `LinkedIn search result` line for
 each valid recent job returned by every poll, labeled as new or already tracked.
 Use that phrase in Render's log search to find individual results.
 
+## Render keep-alive pings
+
+The worker exposes an authenticated `POST /keep-alive` endpoint. Each accepted
+ping inserts its database-assigned timestamp into the `keep_alive_pings` table
+in Supabase; it does not create a job or send a Telegram message.
+
+To call it from outside Render, add these GitHub repository Actions secrets:
+
+- `RENDER_SERVICE_URL`: the Render service base URL, for example
+  `https://your-service.onrender.com`
+- `JOBIE_API_TOKEN`: the same strong token configured on the Render service
+
+The workflow at `.github/workflows/render-keep-alive.yml` runs approximately
+every 13 minutes and can also be run manually from the Actions tab. Enable
+GitHub Actions for the repository and ensure the workflow is on the default
+branch. The endpoint can also be called manually:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri 'https://your-service.onrender.com/keep-alive' -Headers @{ Authorization = "Bearer $env:JOBIE_API_TOKEN" }
+```
+
+Scheduled Actions can be delayed or skipped, and Render availability depends on
+the service plan and platform limits. This is a best-effort keep-awake mechanism,
+not a guarantee of uninterrupted 24/7 uptime; use an always-on Render plan if
+continuous availability is required.
+
+
 ## Setup on Windows
 
 ```powershell

@@ -140,6 +140,14 @@ def init_db() -> None:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS keep_alive_pings (
+                    id          BIGSERIAL PRIMARY KEY,
+                    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_search_runs_started_at
                     ON search_runs (started_at DESC)
                 """
