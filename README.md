@@ -44,6 +44,10 @@ copy .env.example .env
 .venv\Scripts\python.exe -m scripts.bootstrap_db
 ```
 
+Render uses the repository's `runtime.txt`, which pins Python 3.14.3. The pinned
+Pydantic version provides a prebuilt `pydantic-core` wheel for this runtime, so
+deployment does not need to build it from Rust source.
+
 Edit `.env` with your own settings. Generate a strong `JOBIE_API_TOKEN` (for example, `python -c "import secrets; print(secrets.token_urlsafe(32))"`) and use it for API imports and the authorized-feed connector. Keep secrets in `.env`; do not commit `.env`, your database, resume, or personal documents.
 
 For automated LinkedIn search, set the following in `.env` (change the search terms and location to match your target roles):
