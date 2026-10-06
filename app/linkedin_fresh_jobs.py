@@ -9,20 +9,20 @@ GET /fresh-jobs returns and clears whatever's accumulated since the last read.
 
 import asyncio
 import re
-import sqlite3
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.db import get_connection, init_db
 from app.freshness import parse_timestamp, posted_within_seconds
 from app.logging_setup import setup_logger
 from app.messaging import TelegramNotifier
@@ -35,7 +35,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-DB_PATH = settings.DATABASE_PATH
 POLL_INTERVAL_SECONDS = settings.LINKEDIN_POLL_INTERVAL_SECONDS
 LOOKBACK_SECONDS = settings.LINKEDIN_LOOKBACK_HOURS * 60 * 60
 TPR_SECONDS = LOOKBACK_SECONDS
@@ -50,46 +49,6 @@ buffer_lock = asyncio.Lock()
 digest_send_lock = asyncio.Lock()
 logger = setup_logger()
 notifier = TelegramNotifier()
-
-
-def init_db():
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS seen_jobs (
-            job_id TEXT PRIMARY KEY,
-            title TEXT,
-            company TEXT,
-            first_seen REAL,
-            url TEXT,
-            posted_at TEXT
-        )"""
-    )
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(seen_jobs)")}
-    if "url" not in columns:
-        conn.execute("ALTER TABLE seen_jobs ADD COLUMN url TEXT")
-    if "posted_at" not in columns:
-        conn.execute("ALTER TABLE seen_jobs ADD COLUMN posted_at TEXT")
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS digest_runs (
-            digest_date TEXT PRIMARY KEY,
-            sent_at TEXT NOT NULL
-        )"""
-    )
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS manual_digest_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            local_date TEXT NOT NULL,
-            requested_at TEXT NOT NULL,
-            status TEXT NOT NULL
-        )"""
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_manual_digest_runs_date ON manual_digest_runs(local_date)"
-    )
-    conn.row_factory = sqlite3.Row
-    conn.commit()
-    return conn
 
 
 def fetch_job_cards_html(keywords: str, location: str, tpr_seconds: int, start: int = 0) -> str:
@@ -198,14 +157,18 @@ def fetch_recent_jobs() -> list[dict]:
 
 
 def get_recent_digest_jobs(
-    conn, now: datetime | None = None, lookback_seconds: int | None = None
+    now: datetime | None = None, lookback_seconds: int | None = None
 ) -> list[dict]:
     now = now or datetime.now(timezone.utc)
     lookback_seconds = LOOKBACK_SECONDS if lookback_seconds is None else lookback_seconds
     jobs = []
-    rows = conn.execute(
-        "SELECT job_id, title, company, url, posted_at FROM seen_jobs WHERE url IS NOT NULL AND posted_at IS NOT NULL"
-    ).fetchall()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT job_id, title, company, url, posted_at FROM seen_jobs "
+                "WHERE url IS NOT NULL AND posted_at IS NOT NULL"
+            )
+            rows = cur.fetchall()
     for row in rows:
         posted_at = parse_timestamp(row["posted_at"])
         if posted_at is None:
@@ -218,7 +181,6 @@ def get_recent_digest_jobs(
 
 
 async def deliver_digest(
-    conn,
     message_notifier: TelegramNotifier | None = None,
     lookback_seconds: int | None = None,
     lookback_period: str | None = None,
@@ -231,7 +193,7 @@ async def deliver_digest(
     )
     message_notifier = message_notifier or notifier
     async with buffer_lock:
-        jobs = get_recent_digest_jobs(conn, lookback_seconds=lookback_seconds)
+        jobs = await asyncio.to_thread(get_recent_digest_jobs, None, lookback_seconds)
     message_ids = await asyncio.to_thread(
         message_notifier.send_digest, jobs, lookback_period
     )
@@ -278,7 +240,7 @@ def rolling_digest_specs() -> list[tuple[str, str, str, int, str]]:
     ]
 
 
-async def maybe_send_rolling_digests(conn) -> None:
+async def maybe_send_rolling_digests() -> None:
     checked_times = getattr(app.state, "last_rolling_digest_checked_at", {})
     for name, bot_token, chat_id, interval_seconds, lookback_period in rolling_digest_specs():
         if not bot_token and not chat_id:
@@ -297,7 +259,6 @@ async def maybe_send_rolling_digests(conn) -> None:
                     continue
 
                 jobs, message_ids = await deliver_digest(
-                    conn,
                     digest_notifier,
                     interval_seconds,
                     lookback_period,
@@ -340,43 +301,46 @@ def rolling_poll_delay_seconds(now: datetime | None = None) -> int:
     return max(1, min(POLL_INTERVAL_SECONDS, int(min(due_delays))))
 
 
-def reserve_manual_digest_slot(conn, local_date: str) -> int:
+def reserve_manual_digest_slot(local_date: str) -> int:
+    """Reserve a manual digest slot — enforces rate limit in the DB."""
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        rows = conn.execute(
-            "SELECT requested_at FROM manual_digest_runs WHERE local_date = ? ORDER BY id DESC",
-            (local_date,),
-        ).fetchall()
-        if len(rows) >= settings.MANUAL_DIGEST_MAX_PER_DAY:
-            raise HTTPException(
-                status_code=429,
-                detail="Daily manual digest limit reached",
-                headers={"Retry-After": "86400"},
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Serialise slot reservation with an advisory lock
+            cur.execute("SELECT pg_advisory_xact_lock(42)")
+            cur.execute(
+                "SELECT requested_at FROM manual_digest_runs "
+                "WHERE local_date = %s ORDER BY id DESC",
+                (local_date,),
             )
-        if rows:
-            last_request = datetime.fromisoformat(rows[0]["requested_at"])
-            elapsed = (now - last_request).total_seconds()
-            remaining = settings.MANUAL_DIGEST_COOLDOWN_SECONDS - int(elapsed)
-            if remaining > 0:
+            rows = cur.fetchall()
+            if len(rows) >= settings.MANUAL_DIGEST_MAX_PER_DAY:
                 raise HTTPException(
                     status_code=429,
-                    detail="Manual digest cooldown is active",
-                    headers={"Retry-After": str(remaining)},
+                    detail="Daily manual digest limit reached",
+                    headers={"Retry-After": "86400"},
                 )
-        cursor = conn.execute(
-            "INSERT INTO manual_digest_runs (local_date, requested_at, status) VALUES (?, ?, 'pending')",
-            (local_date, now_iso),
-        )
-        conn.commit()
-        return cursor.lastrowid
-    except Exception:
-        conn.rollback()
-        raise
+            if rows:
+                last_request = datetime.fromisoformat(rows[0]["requested_at"])
+                elapsed = (now - last_request).total_seconds()
+                remaining = settings.MANUAL_DIGEST_COOLDOWN_SECONDS - int(elapsed)
+                if remaining > 0:
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Manual digest cooldown is active",
+                        headers={"Retry-After": str(remaining)},
+                    )
+            cur.execute(
+                "INSERT INTO manual_digest_runs (local_date, requested_at, status) "
+                "VALUES (%s, %s, 'pending') RETURNING id",
+                (local_date, now_iso),
+            )
+            row = cur.fetchone()
+            return row["id"]
 
 
-async def maybe_send_daily_digest(conn, digest_timezone: ZoneInfo, digest_time) -> None:
+async def maybe_send_daily_digest(digest_timezone: ZoneInfo, digest_time) -> None:
     local_now = datetime.now(digest_timezone)
     if local_now.timetz().replace(tzinfo=None) < digest_time:
         return
@@ -384,22 +348,27 @@ async def maybe_send_daily_digest(conn, digest_timezone: ZoneInfo, digest_time) 
     digest_date = local_now.date().isoformat()
     async with digest_send_lock:
         async with buffer_lock:
-            already_sent = conn.execute(
-                "SELECT 1 FROM digest_runs WHERE digest_date = ?", (digest_date,)
-            ).fetchone()
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT 1 FROM digest_runs WHERE digest_date = %s", (digest_date,)
+                    )
+                    already_sent = cur.fetchone()
         if already_sent:
             return
 
-        jobs, message_ids = await deliver_digest(conn)
+        jobs, message_ids = await deliver_digest()
         if not message_ids:
             return
 
         async with buffer_lock:
-            conn.execute(
-                "INSERT OR IGNORE INTO digest_runs (digest_date, sent_at) VALUES (?, ?)",
-                (digest_date, datetime.now(timezone.utc).isoformat()),
-            )
-            conn.commit()
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO digest_runs (digest_date, sent_at) VALUES (%s, %s) "
+                        "ON CONFLICT (digest_date) DO NOTHING",
+                        (digest_date, datetime.now(timezone.utc).isoformat()),
+                    )
         logger.info(
             "Daily Telegram digest sent for %s: %d jobs in %d message(s)",
             digest_date,
@@ -409,7 +378,7 @@ async def maybe_send_daily_digest(conn, digest_timezone: ZoneInfo, digest_time) 
         app.state.last_digest_sent_at = datetime.now(timezone.utc).isoformat()
 
 
-async def poll_loop(conn, digest_timezone: ZoneInfo, digest_time) -> None:
+async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
     while True:
         try:
             fetched_jobs = await asyncio.to_thread(fetch_recent_jobs)
@@ -423,37 +392,50 @@ async def poll_loop(conn, digest_timezone: ZoneInfo, digest_time) -> None:
             now = time.time()
             new_jobs = []
             async with buffer_lock:
-                for job in jobs:
-                    cur = conn.execute("SELECT 1 FROM seen_jobs WHERE job_id = ?", (job["job_id"],))
-                    if cur.fetchone() is None:
-                        conn.execute(
-                            "INSERT INTO seen_jobs (job_id, title, company, first_seen, url, posted_at) VALUES (?, ?, ?, ?, ?, ?)",
-                            (
-                                job["job_id"],
-                                job.get("title"),
-                                job.get("company"),
-                                now,
-                                job["url"],
-                                job.get("posted_at"),
-                            ),
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        for job in jobs:
+                            cur.execute(
+                                "SELECT 1 FROM seen_jobs WHERE job_id = %s",
+                                (job["job_id"],),
+                            )
+                            if cur.fetchone() is None:
+                                cur.execute(
+                                    "INSERT INTO seen_jobs "
+                                    "(job_id, title, company, first_seen, url, posted_at) "
+                                    "VALUES (%s, %s, %s, %s, %s, %s) "
+                                    "ON CONFLICT (job_id) DO NOTHING",
+                                    (
+                                        job["job_id"],
+                                        job.get("title"),
+                                        job.get("company"),
+                                        now,
+                                        job["url"],
+                                        job.get("posted_at"),
+                                    ),
+                                )
+                                new_jobs_buffer.append(job)
+                                if len(new_jobs_buffer) > MAX_BUFFERED_JOBS:
+                                    del new_jobs_buffer[: len(new_jobs_buffer) - MAX_BUFFERED_JOBS]
+                                new_jobs.append(job)
+                            else:
+                                cur.execute(
+                                    "UPDATE seen_jobs "
+                                    "SET title = %s, company = %s, url = %s, posted_at = %s "
+                                    "WHERE job_id = %s",
+                                    (
+                                        job.get("title"),
+                                        job.get("company"),
+                                        job["url"],
+                                        job.get("posted_at"),
+                                        job["job_id"],
+                                    ),
+                                )
+                        # Prune records older than 7 days
+                        cur.execute(
+                            "DELETE FROM seen_jobs WHERE first_seen < %s",
+                            (now - 7 * 86400,),
                         )
-                        new_jobs_buffer.append(job)
-                        if len(new_jobs_buffer) > MAX_BUFFERED_JOBS:
-                            del new_jobs_buffer[: len(new_jobs_buffer) - MAX_BUFFERED_JOBS]
-                        new_jobs.append(job)
-                    else:
-                        conn.execute(
-                            "UPDATE seen_jobs SET title = ?, company = ?, url = ?, posted_at = ? WHERE job_id = ?",
-                            (
-                                job.get("title"),
-                                job.get("company"),
-                                job["url"],
-                                job.get("posted_at"),
-                                job["job_id"],
-                            ),
-                        )
-                conn.execute("DELETE FROM seen_jobs WHERE first_seen < ?", (now - 7 * 86400,))
-                conn.commit()
             app.state.last_poll_success_at = datetime.now(timezone.utc).isoformat()
             app.state.last_poll_job_count = len(jobs)
             app.state.last_poll_error = None
@@ -481,12 +463,12 @@ async def poll_loop(conn, digest_timezone: ZoneInfo, digest_time) -> None:
             logger.exception("LinkedIn guest search poll failed: %s", e)
 
         try:
-            await maybe_send_daily_digest(conn, digest_timezone, digest_time)
+            await maybe_send_daily_digest(digest_timezone, digest_time)
         except Exception as e:
             logger.exception("Daily Telegram digest failed: %s", e)
 
         try:
-            await maybe_send_rolling_digests(conn)
+            await maybe_send_rolling_digests()
         except Exception as e:
             logger.exception("Rolling Telegram digest failed: %s", e)
 
@@ -517,8 +499,9 @@ async def lifespan(app: FastAPI):
     except (ValueError, ZoneInfoNotFoundError) as exc:
         raise RuntimeError("Set a valid DAILY_DIGEST_TIME (HH:MM) and DAILY_DIGEST_TIMEZONE in .env") from exc
 
-    conn = init_db()
-    app.state.db_conn = conn
+    # Initialise Supabase schema
+    await asyncio.to_thread(init_db)
+
     app.state.digest_timezone = digest_timezone
     app.state.worker_started_at = datetime.now(timezone.utc).isoformat()
     app.state.last_poll_success_at = None
@@ -526,7 +509,7 @@ async def lifespan(app: FastAPI):
     app.state.last_poll_error = None
     app.state.last_digest_sent_at = None
     app.state.last_rolling_digest_checked_at = {}
-    task = asyncio.create_task(poll_loop(conn, digest_timezone, digest_time))
+    task = asyncio.create_task(poll_loop(digest_timezone, digest_time))
     try:
         yield
     finally:
@@ -535,18 +518,37 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
-        app.state.db_conn = None
-        conn.close()
 
 
 app = FastAPI(title="LinkedIn Fresh Jobs API", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/api/jobs")
+async def get_all_jobs(limit: int = Query(300, ge=1, le=1000)) -> dict:
+    """Returns stored seen_jobs directly from the Supabase PostgreSQL database."""
+    def _query_jobs():
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT job_id, title, company, first_seen, url, posted_at FROM seen_jobs ORDER BY first_seen DESC LIMIT %s",
+                    (limit,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    jobs = await asyncio.to_thread(_query_jobs)
+    return {"count": len(jobs), "jobs": jobs}
+
 
 @app.get("/health")
 async def worker_health() -> JSONResponse:
-    if getattr(app.state, "db_conn", None) is None:
-        return JSONResponse(status_code=503, content={"status": "not_started"})
-
     last_success = getattr(app.state, "last_poll_success_at", None)
     stale_after = max(POLL_INTERVAL_SECONDS * 3, 300)
     stale = last_success is None
@@ -584,9 +586,6 @@ async def fresh_jobs(
 @app.post("/digest/send")
 async def send_digest_now(authorization: str | None = Header(default=None)) -> dict:
     require_api_bearer_token(authorization, settings.JOBIE_API_TOKEN)
-    conn = getattr(app.state, "db_conn", None)
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Job search worker is not running")
 
     digest_timezone = getattr(app.state, "digest_timezone", None)
     if digest_timezone is None:
@@ -595,28 +594,30 @@ async def send_digest_now(authorization: str | None = Header(default=None)) -> d
     async with digest_send_lock:
         try:
             async with buffer_lock:
-                request_id = reserve_manual_digest_slot(
-                    conn, datetime.now(digest_timezone).date().isoformat()
+                request_id = await asyncio.to_thread(
+                    reserve_manual_digest_slot,
+                    datetime.now(digest_timezone).date().isoformat(),
                 )
         except HTTPException:
             raise
         try:
-            jobs, message_ids = await deliver_digest(conn)
+            jobs, message_ids = await deliver_digest()
         except Exception as exc:
-            async with buffer_lock:
-                conn.execute(
-                    "UPDATE manual_digest_runs SET status = 'failed' WHERE id = ?",
-                    (request_id,),
-                )
-                conn.commit()
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE manual_digest_runs SET status = 'failed' WHERE id = %s",
+                        (request_id,),
+                    )
             logger.warning("Manual Telegram digest failed (%s)", type(exc).__name__)
             raise HTTPException(status_code=502, detail="Telegram digest delivery failed") from exc
-        async with buffer_lock:
-            conn.execute(
-                "UPDATE manual_digest_runs SET status = 'sent' WHERE id = ?",
-                (request_id,),
-            )
-            conn.commit()
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE manual_digest_runs SET status = 'sent' WHERE id = %s",
+                    (request_id,),
+                )
         app.state.last_digest_sent_at = datetime.now(timezone.utc).isoformat()
     return {
         "status": "sent",

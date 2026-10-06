@@ -6,3 +6,4 @@ pydantic==2.8.2
 requests==2.32.3
 beautifulsoup4==4.12.3
 tzdata==2026.4
+psycopg2-binary==2.9.10

@@ -24,18 +24,18 @@ def import_jobs(jobs: Iterable[Dict[str, Any]]) -> List[Dict[str, str]]:
     imported: List[Dict[str, str]] = []
 
     with get_connection() as conn:
-        for raw_job in jobs:
-            job = normalize_job(raw_job)
-            cursor = conn.execute(
-                """
-                INSERT OR IGNORE INTO jobs_seen
-                    (job_id, title, company, url, posted_at, status)
-                VALUES (?, ?, ?, ?, ?, 'new')
-                """,
-                (job["job_id"], job["title"], job["company"], job["url"], job["posted_at"]),
-            )
-            if cursor.rowcount:
-                imported.append(job)
-        conn.commit()
+        with conn.cursor() as cur:
+            for raw_job in jobs:
+                job = normalize_job(raw_job)
+                cur.execute(
+                    """
+                    INSERT INTO jobs_seen (job_id, title, company, url, posted_at, status)
+                    VALUES (%s, %s, %s, %s, %s, 'new')
+                    ON CONFLICT (job_id) DO NOTHING
+                    """,
+                    (job["job_id"], job["title"], job["company"], job["url"], job["posted_at"]),
+                )
+                if cur.rowcount:
+                    imported.append(job)
 
     return imported

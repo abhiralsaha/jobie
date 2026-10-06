@@ -7,16 +7,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 
-def resolve_project_path(value: str, default: Path) -> str:
-    path = Path(value) if value else default
-    if not path.is_absolute():
-        path = BASE_DIR / path
-    return str(path.resolve())
-
-
 class Settings:
     APP_NAME: str = "jobie"
-    DATABASE_PATH: str = resolve_project_path(os.getenv("DATABASE_PATH", ""), BASE_DIR / "jobie.db")
+
+    # Supabase / PostgreSQL
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_DB_URL: str = os.getenv("SUPABASE_DB_URL", "")
     PROFILE_PATH: str = os.getenv("PROFILE_PATH", str(BASE_DIR / "config" / "candidate_profile.json"))
     LOG_PATH: str = os.getenv("LOG_PATH", str(BASE_DIR / "logs" / "jobie.log"))
 
