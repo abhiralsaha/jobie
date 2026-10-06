@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 
 from app.config import settings
@@ -9,13 +10,20 @@ def setup_logger() -> logging.Logger:
     logger.setLevel(logging.INFO)
     logger.propagate = False
 
-    log_path = Path(settings.LOG_PATH)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if logger.handlers:
+        return logger
 
-    if not logger.handlers:
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+
+    # Vercel/Serverless often mounts the app directory as read-only.
+    # Fall back to stdout logging if we can't create the log file.
+    try:
+        log_path = Path(settings.LOG_PATH)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         handler = logging.FileHandler(log_path, encoding="utf-8")
-        formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+    except OSError:
+        handler = logging.StreamHandler(sys.stdout)
 
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
     return logger
