@@ -484,6 +484,18 @@ async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
                 len(jobs),
                 len(new_jobs),
             )
+            new_job_ids = {job["job_id"] for job in new_jobs}
+            for job in jobs:
+                logger.info(
+                    "LinkedIn search result [%s]: job_id=%s title=%r company=%r "
+                    "posted_at=%r url=%r",
+                    "new" if job["job_id"] in new_job_ids else "already tracked",
+                    job["job_id"],
+                    job.get("title"),
+                    job.get("company"),
+                    job.get("posted_at"),
+                    job.get("url"),
+                )
             for job in new_jobs:
                 if not posted_within_seconds(
                     job.get("posted_at") or "", settings.RECENT_JOB_WINDOW_SECONDS

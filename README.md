@@ -41,6 +41,9 @@ background search in Supabase, including when it ran, how many recent matches it
 checked, any newly discovered jobs, and the error type for failed searches.
 History refreshes every 30 seconds and can be paged to older runs. Records begin
 when this version of the worker is deployed and are retained in the database.
+Render's Application logs also include one `LinkedIn search result` line for
+each valid recent job returned by every poll, labeled as new or already tracked.
+Use that phrase in Render's log search to find individual results.
 
 ## Setup on Windows
 
