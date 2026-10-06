@@ -8,6 +8,7 @@ GET /fresh-jobs returns and clears whatever's accumulated since the last read.
 """
 
 import asyncio
+import json
 import re
 import time
 from contextlib import asynccontextmanager
@@ -154,6 +155,36 @@ def fetch_recent_jobs() -> list[dict]:
         if not page_jobs:
             break
     return list(jobs_by_id.values())
+
+
+def record_search_run(
+    started_at: datetime,
+    completed_at: datetime,
+    status: str,
+    matched_count: int = 0,
+    new_jobs: list[dict] | None = None,
+    error: str | None = None,
+) -> None:
+    new_jobs = new_jobs or []
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO search_runs
+                    (started_at, completed_at, status, matched_count,
+                     new_job_count, new_jobs, error)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
+                """,
+                (
+                    started_at,
+                    completed_at,
+                    status,
+                    matched_count,
+                    len(new_jobs),
+                    json.dumps(new_jobs),
+                    error,
+                ),
+            )
 
 
 def get_recent_digest_jobs(
@@ -380,6 +411,7 @@ async def maybe_send_daily_digest(digest_timezone: ZoneInfo, digest_time) -> Non
 
 async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
     while True:
+        poll_started_at = datetime.now(timezone.utc)
         try:
             fetched_jobs = await asyncio.to_thread(fetch_recent_jobs)
             jobs = [
@@ -439,6 +471,19 @@ async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
             app.state.last_poll_success_at = datetime.now(timezone.utc).isoformat()
             app.state.last_poll_job_count = len(jobs)
             app.state.last_poll_error = None
+            await asyncio.to_thread(
+                record_search_run,
+                poll_started_at,
+                datetime.now(timezone.utc),
+                "success",
+                len(jobs),
+                new_jobs,
+            )
+            logger.info(
+                "LinkedIn search completed: %d matching jobs, %d newly discovered",
+                len(jobs),
+                len(new_jobs),
+            )
             for job in new_jobs:
                 if not posted_within_seconds(
                     job.get("posted_at") or "", settings.RECENT_JOB_WINDOW_SECONDS
@@ -461,6 +506,16 @@ async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
         except Exception as e:
             app.state.last_poll_error = type(e).__name__
             logger.exception("LinkedIn guest search poll failed: %s", e)
+            try:
+                await asyncio.to_thread(
+                    record_search_run,
+                    poll_started_at,
+                    datetime.now(timezone.utc),
+                    "failed",
+                    error=type(e).__name__,
+                )
+            except Exception:
+                logger.exception("Failed to save LinkedIn search failure history")
 
         try:
             await maybe_send_daily_digest(digest_timezone, digest_time)
@@ -545,6 +600,35 @@ async def get_all_jobs(limit: int = Query(300, ge=1, le=1000)) -> dict:
 
     jobs = await asyncio.to_thread(_query_jobs)
     return {"count": len(jobs), "jobs": jobs}
+
+
+@app.get("/api/search-logs")
+async def get_search_logs(
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """Returns paginated poll history, newest first."""
+
+    def _query_logs():
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, started_at, completed_at, status, matched_count,
+                           new_job_count, new_jobs, error
+                    FROM search_runs
+                    ORDER BY started_at DESC, id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit + 1, offset),
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    rows = await asyncio.to_thread(_query_logs)
+    return {
+        "logs": rows[:limit],
+        "has_more": len(rows) > limit,
+    }
 
 
 @app.get("/health")

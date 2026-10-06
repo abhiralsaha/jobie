@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useJobs } from './hooks/useJobs';
+import { useSearchLogs } from './hooks/useSearchLogs';
 import { ageSeconds } from './lib/time';
 import { Header } from './components/Header';
 import { StatsBar } from './components/StatsBar';
@@ -7,6 +8,7 @@ import { JobCard } from './components/JobCard';
 import { NotificationBanner } from './components/NotificationBanner';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { EmptyState } from './components/EmptyState';
+import { SearchHistory } from './components/SearchHistory';
 import type { TimeFilter, SortOption } from './types';
 import { AlertCircle, RefreshCw, Radio } from 'lucide-react';
 
@@ -44,6 +46,7 @@ export const App: React.FC = () => {
     refetch,
     hasAnonKey,
   } = useJobs(notificationPerm === 'granted');
+  const searchHistory = useSearchLogs();
 
   // Force re-render of relative times every 15 seconds
   const [, setTick] = useState(0);
@@ -154,6 +157,15 @@ export const App: React.FC = () => {
           onFilterChange={setActiveFilter}
           activeSort={activeSort}
           onSortChange={setActiveSort}
+        />
+
+        <SearchHistory
+          logs={searchHistory.logs}
+          loading={searchHistory.loading}
+          loadingMore={searchHistory.loadingMore}
+          hasMore={searchHistory.hasMore}
+          error={searchHistory.error}
+          onLoadMore={searchHistory.loadMore}
         />
 
         {/* Error notification if backend / supabase fails */}

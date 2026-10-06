@@ -124,6 +124,26 @@ def init_db() -> None:
                 )
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_runs (
+                    id              BIGSERIAL PRIMARY KEY,
+                    started_at      TIMESTAMPTZ NOT NULL,
+                    completed_at    TIMESTAMPTZ NOT NULL,
+                    status          TEXT NOT NULL,
+                    matched_count   INTEGER NOT NULL DEFAULT 0,
+                    new_job_count   INTEGER NOT NULL DEFAULT 0,
+                    new_jobs        JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    error           TEXT
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_search_runs_started_at
+                    ON search_runs (started_at DESC)
+                """
+            )
             # ── daily digest tracking ─────────────────────────────────────────
             cur.execute(
                 """

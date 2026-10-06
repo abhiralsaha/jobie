@@ -34,6 +34,14 @@ The system is not legal advice. Check the terms and API rules for every source y
 
 The LinkedIn worker only searches and reports public job listings. It does not interact with applications or attempt to evade platform controls.
 
+## Search history
+
+The dashboard's Search history section records each successful or failed
+background search in Supabase, including when it ran, how many recent matches it
+checked, any newly discovered jobs, and the error type for failed searches.
+History refreshes every 30 seconds and can be paged to older runs. Records begin
+when this version of the worker is deployed and are retained in the database.
+
 ## Setup on Windows
 
 ```powershell

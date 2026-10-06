@@ -618,6 +618,162 @@ body {
   font-weight: 600;
 }
 
+/* Persistent worker search history */
+.search-history {
+  margin: 0 0 24px;
+  padding: 18px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  backdrop-filter: blur(12px);
+}
+
+.search-history-header,
+.search-history-heading,
+.search-history-entry-top,
+.search-history-entry-top time {
+  display: flex;
+  align-items: center;
+}
+
+.search-history-header,
+.search-history-entry-top {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.search-history-heading {
+  gap: 10px;
+  color: #a5b4fc;
+}
+
+.search-history-heading h2 {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.search-history-heading p,
+.search-history-count,
+.search-history-empty {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.search-history-list {
+  margin-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.search-history-entry {
+  display: flex;
+  gap: 12px;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.search-history-status {
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
+.search-history-status.success {
+  color: #34d399;
+}
+
+.search-history-status.failed,
+.search-history-failure,
+.search-history-error {
+  color: #fb7185;
+}
+
+.search-history-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-history-entry-top strong {
+  font-size: 0.84rem;
+}
+
+.search-history-entry-top time {
+  flex: 0 0 auto;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.search-history-summary {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.search-history-jobs {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+  list-style: none;
+}
+
+.search-history-jobs li,
+.search-history-jobs a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-history-jobs li {
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+
+.search-history-jobs a {
+  color: #a5b4fc;
+  text-decoration: none;
+}
+
+.search-history-jobs a:hover {
+  color: #c7d2fe;
+  text-decoration: underline;
+}
+
+.search-history-company {
+  color: var(--text-muted);
+}
+
+.search-history-empty,
+.search-history-error {
+  margin-top: 12px;
+  font-size: 0.8rem;
+}
+
+.search-history-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.search-history-more:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+.search-history-more:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 /* Job Cards Grid */
 .jobs-grid {
   display: grid;
