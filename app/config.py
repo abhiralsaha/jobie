@@ -44,6 +44,12 @@ class Settings:
     )
     DAILY_DIGEST_TIME: str = os.getenv("DAILY_DIGEST_TIME", "18:00")
     DAILY_DIGEST_TIMEZONE: str = os.getenv("DAILY_DIGEST_TIMEZONE", "Asia/Kolkata")
+
+    # ── Ultra-fresh watcher bot (separate 24/7 process) ──────────────────
+    FRESH_WATCHER_BOT_TOKEN: str = os.getenv("FRESH_WATCHER_BOT_TOKEN", "")
+    FRESH_WATCHER_CHAT_ID: str = os.getenv("FRESH_WATCHER_CHAT_ID", "")
+    FRESH_WATCHER_INTERVAL: int = int(os.getenv("FRESH_WATCHER_INTERVAL", "60"))   # seconds
+    FRESH_WATCHER_LOOKBACK: int = int(os.getenv("FRESH_WATCHER_LOOKBACK", "120"))  # 2 minutes
     MANUAL_DIGEST_MAX_PER_DAY: int = int(os.getenv("MANUAL_DIGEST_MAX_PER_DAY", "3"))
     MANUAL_DIGEST_COOLDOWN_SECONDS: int = int(
         os.getenv("MANUAL_DIGEST_COOLDOWN_SECONDS", "300")
