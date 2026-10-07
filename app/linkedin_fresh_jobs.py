@@ -31,9 +31,15 @@ from app.security import require_api_bearer_token
 
 GUEST_SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 
+# Realistic browser headers — bare bot strings are blocked quickly on shared IPs
 HEADERS = {
-    "User-Agent": "JobieJobMonitor/1.0",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
 POLL_INTERVAL_SECONDS = settings.LINKEDIN_POLL_INTERVAL_SECONDS
@@ -45,11 +51,49 @@ MAX_BUFFERED_JOBS = 1000
 SEARCH_KEYWORDS = settings.LINKEDIN_SEARCH_KEYWORDS
 SEARCH_LOCATION = settings.LINKEDIN_SEARCH_LOCATION
 
+# Circuit-breaker: absolute epoch time until which all LinkedIn polling is suspended.
+# Set to a future timestamp after exhausting 429 retries; reset to 0 on success.
+_circuit_open_until: float = 0.0
+CIRCUIT_COOLDOWN_SECONDS = 1800  # 30 minutes
+
+# Shared requests.Session — keeps TCP connections alive and shares headers.
+_session = requests.Session()
+_session.headers.update(HEADERS)
+
 new_jobs_buffer: list[dict] = []
 buffer_lock = asyncio.Lock()
 digest_send_lock = asyncio.Lock()
 logger = setup_logger()
 notifier = TelegramNotifier()
+
+
+def _fetch_raw(params: dict, max_retries: int = 4) -> str:
+    """Fetch a LinkedIn guest-search page with exponential backoff on 429.
+
+    Raises RuntimeError after exhausting retries (caller should trip the circuit breaker).
+    Raises requests.HTTPError for non-429 HTTP errors.
+    """
+    import random as _random
+
+    delay = 5.0
+    for attempt in range(max_retries):
+        resp = _session.get(GUEST_SEARCH_URL, params=params, timeout=(5, 20))
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", delay))
+            wait = retry_after + _random.uniform(0, 3)
+            logger.warning(
+                "LinkedIn 429 on attempt %d/%d — waiting %.0fs (Retry-After=%s)",
+                attempt + 1,
+                max_retries,
+                wait,
+                resp.headers.get("Retry-After", "not set"),
+            )
+            time.sleep(wait)
+            delay = min(delay * 2, 120)
+            continue
+        resp.raise_for_status()
+        return resp.text
+    raise RuntimeError(f"LinkedIn rate-limited after {max_retries} retries")
 
 
 def fetch_job_cards_html(keywords: str, location: str, tpr_seconds: int, start: int = 0) -> str:
@@ -60,16 +104,7 @@ def fetch_job_cards_html(keywords: str, location: str, tpr_seconds: int, start: 
         "sortBy": "DD",  # most recent first
         "start": start,
     }
-    with requests.get(
-        GUEST_SEARCH_URL, params=params, headers=HEADERS, timeout=(5, 10), stream=True
-    ) as resp:
-        resp.raise_for_status()
-        content = bytearray()
-        for chunk in resp.iter_content(chunk_size=64 * 1024):
-            content.extend(chunk)
-            if len(content) > 3 * 1024 * 1024:
-                raise ValueError("LinkedIn search response exceeds the 3 MB limit")
-        return content.decode(resp.encoding or "utf-8", errors="replace")
+    return _fetch_raw(params)
 
 
 def parse_linkedin_posted_at(time_el) -> str | None:
@@ -138,22 +173,59 @@ def parse_jobs(html: str) -> list[dict]:
 
 
 def fetch_recent_jobs() -> list[dict]:
-    jobs_by_id = {}
+    """Fetch LinkedIn jobs page-by-page with per-page fault isolation.
+
+    Strategy:
+    - Always fetch page 0.
+    - Fetch the next page only when *every* job on the current page was new
+      (indicating there may be more unseen jobs just beyond it).
+    - Catch errors per page; keep whatever has been collected so far.
+    - After exhausting retries, trip the circuit breaker.
+    """
+    import random as _random
+    global _circuit_open_until
+
+    jobs_by_id: dict[str, dict] = {}
+
     for page in range(MAX_SEARCH_PAGES):
-        html = fetch_job_cards_html(
-            SEARCH_KEYWORDS,
-            SEARCH_LOCATION,
-            TPR_SECONDS,
-            start=page * SEARCH_PAGE_SIZE,
-        )
-        page_jobs = parse_jobs(html)
-        new_page_jobs = [job for job in page_jobs if job["job_id"] not in jobs_by_id]
-        if page > 0 and not new_page_jobs:
+        try:
+            html = fetch_job_cards_html(
+                SEARCH_KEYWORDS,
+                SEARCH_LOCATION,
+                TPR_SECONDS,
+                start=page * SEARCH_PAGE_SIZE,
+            )
+        except RuntimeError as exc:
+            # Retries exhausted — trip the circuit breaker and bail out
+            _circuit_open_until = time.time() + CIRCUIT_COOLDOWN_SECONDS
+            logger.error(
+                "LinkedIn circuit breaker tripped — pausing polls for %ds. Reason: %s",
+                CIRCUIT_COOLDOWN_SECONDS,
+                exc,
+            )
             break
-        for job in new_page_jobs:
-            jobs_by_id[job["job_id"]] = job
+        except Exception as exc:
+            logger.warning("LinkedIn page %d fetch failed, keeping prior results: %s", page, exc)
+            break
+
+        page_jobs = parse_jobs(html)
         if not page_jobs:
             break
+
+        new_on_page = [job for job in page_jobs if job["job_id"] not in jobs_by_id]
+        for job in new_on_page:
+            jobs_by_id[job["job_id"]] = job
+
+        # Only go deeper if *every* job on this page was new; otherwise we
+        # are just re-fetching already-known listings — stop early.
+        all_new = len(new_on_page) == len(page_jobs)
+        if not all_new:
+            break
+
+        if page < MAX_SEARCH_PAGES - 1:
+            # Space out page requests to reduce fingerprinting
+            time.sleep(_random.uniform(2, 5))
+
     return list(jobs_by_id.values())
 
 
@@ -411,6 +483,13 @@ async def maybe_send_daily_digest(digest_timezone: ZoneInfo, digest_time) -> Non
 
 async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
     while True:
+        # Circuit breaker: if a recent 429 exhausted all retries, sit out
+        if time.time() < _circuit_open_until:
+            remaining = int(_circuit_open_until - time.time())
+            logger.info("LinkedIn circuit breaker open — skipping poll for %ds", remaining)
+            await asyncio.sleep(60)
+            continue
+
         poll_started_at = datetime.now(timezone.utc)
         try:
             fetched_jobs = await asyncio.to_thread(fetch_recent_jobs)
@@ -539,7 +618,11 @@ async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
         except Exception as e:
             logger.exception("Rolling Telegram digest failed: %s", e)
 
-        await asyncio.sleep(rolling_poll_delay_seconds())
+        # Jitter: spread requests across the interval to avoid burst patterns
+        import random as _random
+        base_delay = rolling_poll_delay_seconds()
+        jitter = _random.uniform(0, min(120, base_delay * 0.2))
+        await asyncio.sleep(base_delay + jitter)
 
 
 @asynccontextmanager

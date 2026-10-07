@@ -35,9 +35,9 @@ class Settings:
     JOBIE_API_TOKEN: str = os.getenv("JOBIE_API_TOKEN", "")
     POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
     RECENT_JOB_WINDOW_SECONDS: int = int(os.getenv("RECENT_JOB_WINDOW_SECONDS", "180"))
-    LINKEDIN_POLL_INTERVAL_SECONDS: int = int(os.getenv("LINKEDIN_POLL_INTERVAL_SECONDS", "120"))
+    LINKEDIN_POLL_INTERVAL_SECONDS: int = int(os.getenv("LINKEDIN_POLL_INTERVAL_SECONDS", "600"))
     LINKEDIN_LOOKBACK_HOURS: int = int(os.getenv("LINKEDIN_LOOKBACK_HOURS", "24"))
-    LINKEDIN_MAX_SEARCH_PAGES: int = int(os.getenv("LINKEDIN_MAX_SEARCH_PAGES", "5"))
+    LINKEDIN_MAX_SEARCH_PAGES: int = int(os.getenv("LINKEDIN_MAX_SEARCH_PAGES", "2"))
     LINKEDIN_SEARCH_KEYWORDS: str = os.getenv("LINKEDIN_SEARCH_KEYWORDS", "software engineer")
     LINKEDIN_SEARCH_LOCATION: str = os.getenv(
         "LINKEDIN_SEARCH_LOCATION", "Gurugram, Haryana, India"
