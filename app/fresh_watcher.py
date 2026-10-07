@@ -42,13 +42,13 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse, urlunsplit
 
-import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from pathlib import Path
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+from app import http_client
 from app.config import settings
 from app.db import get_connection, init_db
 from app.messaging import TelegramNotifier
@@ -79,73 +79,24 @@ LOOKBACK_SECONDS: int = int(os.getenv("FRESH_WATCHER_LOOKBACK", "120"))  # 2 min
 KEYWORDS: str = settings.LINKEDIN_SEARCH_KEYWORDS
 LOCATION: str = settings.LINKEDIN_SEARCH_LOCATION
 
-MAX_RETRIES = 5
-CIRCUIT_COOLDOWN = 1800   # 30 minutes
 JITTER_RANGE = 15         # +/- seconds per poll
-
-# ---------------------------------------------------------------------------
-# Shared HTTP session
-# ---------------------------------------------------------------------------
-_session = requests.Session()
-_session.headers.update(
-    {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    }
-)
-
-# ---------------------------------------------------------------------------
-# Circuit breaker state
-# ---------------------------------------------------------------------------
-_circuit_open_until: float = 0.0
 
 
 # ---------------------------------------------------------------------------
 # HTTP layer
 # ---------------------------------------------------------------------------
 
-def _fetch(params: dict) -> str:
-    """Fetch one page with exponential backoff on 429.
-
-    Raises RuntimeError when all retries are exhausted.
-    Raises requests.HTTPError for non-429 failures.
-    """
-    delay = 5.0
-    for attempt in range(MAX_RETRIES):
-        resp = _session.get(GUEST_SEARCH_URL, params=params, timeout=(5, 20))
-        if resp.status_code == 429:
-            retry_after = int(resp.headers.get("Retry-After", delay))
-            wait = retry_after + random.uniform(0, 3)
-            _log.warning(
-                "429 rate-limited (attempt %d/%d) — sleeping %.0fs "
-                "(Retry-After: %s)",
-                attempt + 1,
-                MAX_RETRIES,
-                wait,
-                resp.headers.get("Retry-After", "absent"),
-            )
-            time.sleep(wait)
-            delay = min(delay * 2, 120)
-            continue
-        resp.raise_for_status()
-        return resp.text
-    raise RuntimeError(f"Exhausted {MAX_RETRIES} retries due to rate limiting")
-
-
 def fetch_page() -> str:
-    return _fetch(
+    return http_client.fetch(
+        GUEST_SEARCH_URL,
         {
             "keywords": KEYWORDS,
             "location": LOCATION,
             "f_TPR": f"r{LOOKBACK_SECONDS}",
             "sortBy": "DD",
             "start": 0,
-        }
+        },
+        log=_log,
     )
 
 
@@ -310,9 +261,8 @@ async def run() -> None:
 
     while True:
         # ── Circuit breaker ───────────────────────────────────────────────
-        now = time.time()
-        if now < _circuit_open_until:
-            remaining = int(_circuit_open_until - now)
+        is_open, remaining = http_client.circuit_is_open()
+        if is_open:
             _log.info("Circuit breaker OPEN — %ds remaining", remaining)
             await asyncio.sleep(min(60, remaining))
             continue
@@ -321,9 +271,9 @@ async def run() -> None:
         try:
             html = await asyncio.to_thread(fetch_page)
         except RuntimeError as exc:
-            _circuit_open_until = time.time() + CIRCUIT_COOLDOWN
+            cooldown = http_client._trip_circuit()
             _log.error(
-                "Circuit breaker TRIPPED (%s). Pausing %ds.", exc, CIRCUIT_COOLDOWN
+                "Circuit breaker TRIPPED (%s). Pausing %ds.", exc, cooldown
             )
             await asyncio.sleep(60)
             continue

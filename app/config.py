@@ -50,6 +50,13 @@ class Settings:
     FRESH_WATCHER_CHAT_ID: str = os.getenv("FRESH_WATCHER_CHAT_ID", "")
     FRESH_WATCHER_INTERVAL: int = int(os.getenv("FRESH_WATCHER_INTERVAL", "60"))   # seconds
     FRESH_WATCHER_LOOKBACK: int = int(os.getenv("FRESH_WATCHER_LOOKBACK", "120"))  # 2 minutes
+
+    # ── HTTP client anti-fingerprinting ────────────────────────────────
+    # Optional rotating proxy: http://user:pass@host:port
+    # Webshare (webshare.io) has a free tier of 10 proxies that works well.
+    LINKEDIN_PROXY_URL: str = os.getenv("LINKEDIN_PROXY_URL", "")
+    # Recycle the requests.Session (new cookies + TCP) every N requests
+    SESSION_RECYCLE_AFTER: int = int(os.getenv("SESSION_RECYCLE_AFTER", "10"))
     MANUAL_DIGEST_MAX_PER_DAY: int = int(os.getenv("MANUAL_DIGEST_MAX_PER_DAY", "3"))
     MANUAL_DIGEST_COOLDOWN_SECONDS: int = int(
         os.getenv("MANUAL_DIGEST_COOLDOWN_SECONDS", "300")
