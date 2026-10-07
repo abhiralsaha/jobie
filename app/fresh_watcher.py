@@ -200,16 +200,21 @@ def is_new_job(job: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def _build_notifier() -> TelegramNotifier | None:
-    if BOT_TOKEN and CHAT_ID:
-        n = TelegramNotifier(BOT_TOKEN, CHAT_ID)
+    token = os.getenv("FRESH_WATCHER_BOT_TOKEN", "").strip() or getattr(settings, "FRESH_WATCHER_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("FRESH_WATCHER_CHAT_ID", "").strip() or getattr(settings, "FRESH_WATCHER_CHAT_ID", "").strip()
+    if token and chat_id:
+        n = TelegramNotifier(token, chat_id)
         if n.is_configured:
+            _log.info("Using dedicated FRESH_WATCHER Telegram bot (token=%s...)", token[:8])
             return n
+        else:
+            _log.warning("FRESH_WATCHER credentials provided but invalid format.")
     # Fall back to the main bot credentials
     n = TelegramNotifier()
     if n.is_configured:
         _log.info(
-            "FRESH_WATCHER_BOT_TOKEN/CHAT_ID not set — "
-            "using main TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID"
+            "Dedicated FRESH_WATCHER_BOT_TOKEN / CHAT_ID not set — "
+            "falling back to main TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"
         )
         return n
     return None
@@ -231,12 +236,36 @@ def send_alert(notifier: TelegramNotifier, job: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Background maintenance: prune seen_jobs older than 7 days
+# ---------------------------------------------------------------------------
+
+async def _prune_loop() -> None:
+    """Delete seen_jobs rows older than 7 days every 6 hours."""
+    PRUNE_INTERVAL = 6 * 3600  # seconds
+    KEEP_SECONDS = 7 * 86400
+    while True:
+        await asyncio.sleep(PRUNE_INTERVAL)
+        try:
+            cutoff = time.time() - KEEP_SECONDS
+            def _prune():
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "DELETE FROM seen_jobs WHERE first_seen < %s", (cutoff,)
+                        )
+                        return cur.rowcount
+            deleted = await asyncio.to_thread(_prune)
+            if deleted:
+                _log.info("Pruned %d stale seen_jobs rows (>7 days old)", deleted)
+        except Exception as exc:
+            _log.warning("seen_jobs prune failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Poll loop
 # ---------------------------------------------------------------------------
 
 async def run() -> None:
-    global _circuit_open_until
-
     _log.info(
         "Starting fresh_watcher — keywords=%r  location=%r  "
         "lookback=%ds  poll_interval=~%ds",
@@ -250,12 +279,17 @@ async def run() -> None:
 
     notifier = _build_notifier()
     if notifier is None:
+        # Don't exit — Render would see exit-code 0 and not restart.
+        # Loop with a loud warning until the operator sets the env vars and redeploys.
         _log.error(
-            "No Telegram bot configured. "
+            "FATAL: No Telegram bot configured. "
             "Set FRESH_WATCHER_BOT_TOKEN + FRESH_WATCHER_CHAT_ID "
-            "(or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID) and restart."
+            "(or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID) and redeploy. "
+            "Sleeping forever until then."
         )
-        return
+        while True:
+            await asyncio.sleep(300)
+            _log.error("Still waiting for Telegram credentials — bot is idle.")
 
     _log.info("Telegram OK. Entering 24/7 poll loop...")
 
@@ -271,7 +305,7 @@ async def run() -> None:
         try:
             html = await asyncio.to_thread(fetch_page)
         except RuntimeError as exc:
-            cooldown = http_client._trip_circuit()
+            cooldown = http_client.trip_circuit()
             _log.error(
                 "Circuit breaker TRIPPED (%s). Pausing %ds.", exc, cooldown
             )
@@ -309,7 +343,12 @@ async def run() -> None:
 
 
 def main() -> None:
-    asyncio.run(run())
+    async def _all() -> None:
+        await asyncio.gather(
+            run(),
+            _prune_loop(),
+        )
+    asyncio.run(_all())
 
 
 if __name__ == "__main__":

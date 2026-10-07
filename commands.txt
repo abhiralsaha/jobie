@@ -1,2 +1,8 @@
- .\.venv\Scripts\python.exe -m uvicorn app.linkedin_fresh_jobs:app --host 127.0.0.1 --port 8000 
- ngrok http 8000   
+# 1. Main LinkedIn worker, FastAPI & Rolling Digest Bot:
+.\.venv\Scripts\python.exe -m uvicorn app.linkedin_fresh_jobs:app --host 127.0.0.1 --port 8000
+
+# 2. Ultra-Fresh Job Watcher Bot (polls every 1 min for jobs posted <= 2 min ago):
+.\.venv\Scripts\python.exe -m app.fresh_watcher
+
+# 3. Optional tunnel for webhook/external access:
+ngrok http 8000

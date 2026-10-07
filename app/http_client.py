@@ -178,6 +178,10 @@ def _trip_circuit() -> float:
     return cooldown
 
 
+# Public alias so callers don't need to reach into private names
+trip_circuit = _trip_circuit
+
+
 def reset_circuit() -> None:
     """Reset the circuit breaker after a successful request."""
     global _circuit_open_until, _circuit_trip_count

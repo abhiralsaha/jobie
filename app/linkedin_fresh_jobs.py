@@ -147,7 +147,7 @@ def fetch_recent_jobs() -> list[dict]:
             )
         except RuntimeError as exc:
             # Retries exhausted — trip the circuit breaker and bail out
-            cooldown = http_client._trip_circuit()
+            cooldown = http_client.trip_circuit()
             logger.error(
                 "LinkedIn circuit breaker tripped — pausing polls for %ds. Reason: %s",
                 cooldown,
