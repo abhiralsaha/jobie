@@ -4,108 +4,56 @@ JOBIE PROJECT SUMMARY
 WHAT IT IS
 ----------
 
-Jobie is a Python job-listing monitor and human-review tracker. It can search
-recent public LinkedIn guest job results, save matching listings in a local
-SQLite database, and notify you through Telegram. It can also receive jobs
-from a manual import or a job feed you are authorized to use.
+Jobie monitors public LinkedIn guest job results and tracks opportunities for
+human review. Persistent state is stored in Supabase PostgreSQL using the
+`SUPABASE_DB_URL` connection string. Telegram sends notifications; the user
+reviews listings and applies manually.
 
-Jobie helps you find and review opportunities. You decide whether to apply;
-the program does not log in to LinkedIn, fill in forms, or submit applications.
+SAFETY BOUNDARY
+---------------
 
-HOW IT WORKS
-------------
+The workers do not log in to LinkedIn, use cookies or credentials, bypass
+controls, fill forms, or submit applications. The public endpoint is not an
+official API and may be incomplete or unavailable. Respect source terms,
+rate limits, and permissions.
 
-1. The search worker looks for your configured keywords and location on a
-	 repeating schedule (two minutes by default).
-2. It checks listing details and posting times, ignores invalid or out-of-range
-	 results, and saves jobs in the local SQLite database (`jobie.db`).
-3. It avoids sending another immediate alert for a job ID it has already seen.
-4. It can send Telegram alerts for very recent jobs, a scheduled daily digest,
-	 and optional digests at shorter intervals.
-5. You review each listing and apply manually on the employer's website.
+TWO WORKERS
+-----------
 
-There are two FastAPI services:
+1. Main search/API worker: `app.linkedin_fresh_jobs:app` searches the configured
+   lookback window, deduplicates in PostgreSQL, serves health/search/digest
+   endpoints, and sends scheduled or manual digests.
+2. Ultra-fresh watcher: `python -m app.fresh_watcher` checks the last two
+   minutes by default and sends immediate Telegram alerts. It is a separate
+   process and can use `FRESH_WATCHER_BOT_TOKEN` and `FRESH_WATCHER_CHAT_ID`.
 
-- Search worker (`app.linkedin_fresh_jobs:app`): searches LinkedIn guest results
-	and provides search status, recent results, and digest endpoints.
-- Import API (`app.main:app`): accepts an authenticated job record from you or
-	an authorized feed, validates it, stores it, and may alert on recent jobs.
-
-An optional feed connector (`scripts.poll_authorized_feed`) polls a provider
-you configure and sends its jobs to the Import API. It is separate from the
-LinkedIn search worker.
+The separate import API (`app.main:app`) accepts authenticated manual or
+authorized-feed records.
 
 GETTING STARTED ON WINDOWS
 --------------------------
 
-Run PowerShell commands from the project folder:
+    python -m venv .venv
+    .venv\Scripts\python.exe -m pip install -r requirements.txt
+    Copy-Item .env.example .env
+    notepad .env
 
-		python -m venv .venv
-		.venv\Scripts\python.exe -m pip install -r requirements.txt
-		Copy-Item .env.example .env
-		.venv\Scripts\python.exe -m scripts.bootstrap_db
+Set `SUPABASE_DB_URL`, a strong `JOBIE_API_TOKEN`, Telegram credentials, and
+search keywords/location. Then run the two workers in separate terminals:
 
-Edit `.env` and set a strong `JOBIE_API_TOKEN`, your Telegram bot token and
-private chat ID (`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`), plus the search
-keywords and location you want. Create a Telegram bot with @BotFather and
-start a chat with it. Keep `.env` and all tokens private.
+    .venv\Scripts\python.exe -m uvicorn app.linkedin_fresh_jobs:app --host 127.0.0.1 --port 8000
+    .venv\Scripts\python.exe -m app.fresh_watcher
 
-Start the automatic search worker:
+The main worker health URL is `http://127.0.0.1:8000/health`. The import API
+can run separately on port 8001:
 
-		.venv\Scripts\python.exe -m uvicorn app.linkedin_fresh_jobs:app --host 127.0.0.1 --port 8000
+    .venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 
-Leave that terminal running. It searches at startup and continues on its poll
-schedule. Check its status at `http://127.0.0.1:8000/health`. The service must
-stay running for automatic searches and scheduled digests.
+RENDER START COMMANDS
+---------------------
 
-To run the separate Import API, use another terminal and port:
+    python -m uvicorn app.linkedin_fresh_jobs:app --host 0.0.0.0 --port $PORT
+    python -m app.fresh_watcher
 
-		.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
-
-The optional authorized-feed connector can then be configured to send imports
-to `http://127.0.0.1:8001/jobs/import`.
-
-USEFUL DEFAULTS AND ENDPOINTS
------------------------------
-
-- Search terms: `software engineer`
-- Location: `Gurugram, Haryana, India`
-- Poll interval: 120 seconds
-- Search lookback: 24 hours
-- Recent-alert window: 180 seconds
-- Maximum LinkedIn search pages per poll: 5 (up to 25 results per page)
-- Daily digest: 18:00 in `Asia/Kolkata`
-- `GET /health`: service status
-- `GET /fresh-jobs?peek=true`: current in-memory search results; requires the
-	bearer API token
-- `POST /digest/send`: request a digest; requires the bearer API token and is
-	rate-limited by default
-- `POST /jobs/import`: import one validated job; requires the bearer API token
-
-The values above can be changed in `.env`. Optional rolling Telegram digests
-use separate bot-token/chat-ID pairs. See `README.md` and `HOW_TO_TEST.txt` for
-full configuration, API examples, and testing instructions.
-
-PROJECT FILES
--------------
-
-- `app/linkedin_fresh_jobs.py`: LinkedIn guest-search worker and digest routes
-- `app/main.py`: job-import API
-- `app/job_intake.py`: job normalization and deduplication
-- `app/db.py`: SQLite setup for imported jobs
-- `app/messaging.py`: Telegram messages
-- `app/config.py`: settings loaded from `.env`
-- `scripts/`: database setup, CSV import, feed polling, and scheduler commands
-- `config/`: example job data and candidate profile
-- `tests/`: automated tests
-- `logs/`: application log files
-
-LIMITS AND SAFETY
------------------
-
-LinkedIn guest search is not an official LinkedIn API. Its results and access
-may change, and the page limit means results are not guaranteed to be complete.
-Use sources only as permitted and respect their terms and rate limits. Jobie
-does not use LinkedIn credentials or cookies, bypass challenges, automate
-applications, or submit them. Keep the API bound to localhost for development,
-protect tokens and the database, and review listings before taking action.
+Create two Render Background Worker services and configure `SUPABASE_DB_URL`
+and the required secrets in each service.

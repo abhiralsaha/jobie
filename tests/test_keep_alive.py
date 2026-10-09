@@ -4,6 +4,10 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from tests.db_fakes import install_psycopg2_import_stub
+
+install_psycopg2_import_stub()
+
 import app.linkedin_fresh_jobs as worker
 from app.config import settings
 

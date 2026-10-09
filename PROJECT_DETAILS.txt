@@ -1,467 +1,125 @@
 JOBIE PROJECT DETAILS
 =====================
 
-Purpose of this document
-------------------------
+This document describes the current runtime. See README.md for setup and
+HOW_TO_TEST.txt for the operational checklist.
 
-This document describes the code and runtime behavior currently present in this
-repository. For the short step-by-step test checklist, see HOW_TO_TEST.txt. For
-the main setup notes, see README.md.
+1. PURPOSE AND SAFETY
+---------------------
 
+Jobie monitors configured public LinkedIn guest-search results, stores matching
+records in Supabase PostgreSQL, and sends Telegram notifications. It can also
+accept authenticated manual records or jobs from an authorized JSON feed.
 
-1. PROJECT SUMMARY
-------------------
+The workers do not log in to LinkedIn, use account cookies or credentials,
+bypass rate limits/CAPTCHAs/checkpoints, fill application forms, or submit
+applications. The guest endpoint is not an official LinkedIn API; results and
+access may change. Use permitted sources and follow their terms.
 
-Jobie is a Python job-listing monitor and human-review tracker. It can:
+2. DATABASE AND CONFIGURATION
+-----------------------------
 
-- Search configured keywords and location through LinkedIn's public guest
-  job-search endpoint without a LinkedIn login.
-- Store listings and digest history in a local SQLite database.
-- Send immediate Telegram alerts through the Bot API for newly discovered postings
-  inside the configured immediate-alert age window.
-- Send a daily Telegram digest of stored listings posted within a rolling window,
-  24 hours by default.
-- Optionally send rolling digests to separate Telegram bots at startup and every
-  5 minutes, 15 minutes, 30 minutes, 1 hour, and 10 hours.
-- Send a digest on demand through an authenticated API endpoint.
-- Accept manually supplied or authorized-feed jobs through a separate API.
-- Reject duplicate job IDs.
+`app/config.py` loads `.env`. `SUPABASE_DB_URL` is required and must be a
+PostgreSQL/Supabase connection string. `app/db.py` uses a thread-safe psycopg2
+connection pool and initializes the required tables in Supabase. Persistent
+tables include `jobs_seen`, `jobs_applied`, `alerts_sent`, `seen_jobs`,
+`search_runs`, `keep_alive_pings`, `digest_runs`, and `manual_digest_runs`.
 
-Jobie does not log in to LinkedIn, use LinkedIn cookies, bypass challenges, fill
-job forms, or submit applications. Candidate-profile values are not used by the
-active monitor or search worker.
+The current runtime has no SQLite database, `DATABASE_PATH`, or `DB_PATH`
+setting. Do not document or configure a local `jobie.db` file.
 
+3. TWO WORKERS
+--------------
 
-2. IMPORTANT SOURCE LIMITATIONS
--------------------------------
+A. Main search/API worker: `app.linkedin_fresh_jobs:app`
+   - Local address: `http://127.0.0.1:8000`.
+   - Render start command: `python -m uvicorn app.linkedin_fresh_jobs:app --host 0.0.0.0 --port $PORT`.
+   - Searches the configured lookback window, stores/deduplicates jobs in
+     `seen_jobs`, records search runs, and sends immediate or digest alerts.
+   - Provides `/health`, authenticated `/fresh-jobs`, `/digest/send`, and
+     `/keep-alive`.
 
-The LinkedIn worker requests a public guest-search endpoint and parses its HTML.
-This is not an official LinkedIn API. The endpoint, returned HTML, available
-results, or access rules can change. Review and follow LinkedIn's applicable
-terms. Do not attempt to evade rate limits, blocks, or verification controls.
+B. Ultra-fresh watcher: `python -m app.fresh_watcher`
+   - Runs as a separate process and Render Background Worker.
+   - Render start command: `python -m app.fresh_watcher`.
+   - Checks the last `FRESH_WATCHER_LOOKBACK` seconds (120 by default) about
+     every `FRESH_WATCHER_INTERVAL` seconds (60 by default).
+   - Uses a dedicated `FRESH_WATCHER_BOT_TOKEN`/
+     `FRESH_WATCHER_CHAT_ID` pair, falling back to the main Telegram pair.
+   - Uses PostgreSQL `seen_jobs` for restart-safe deduplication, retry and
+     circuit-breaker behavior, and no HTTP API of its own.
 
-The configured search checks at most LINKEDIN_MAX_SEARCH_PAGES pages per poll.
-Each page is requested at an offset of 25 listings. The default is five pages,
-or approximately 125 results before page overlap. This is a bounded search, not
-a guarantee that every matching job will be found.
+The separate import API is `app.main:app`, normally port 8001 when the main
+worker occupies port 8000. It owns `/health` and authenticated `/jobs/import`.
+The optional authorized-feed connector posts to that endpoint.
 
-The worker polls every two minutes by default and immediate alerts apply to jobs
-within the last 180 seconds by default. This includes a one-minute buffer for
-search and network delay. Alerts are sent only once per job ID. The daily digest
-uses a 24-hour search window and includes matching listings the worker found and
-saved.
-
-Telegram notifications use the official HTTPS Bot API. The configured bot sends
-outbound alerts and digests; incoming messages and replies are not handled.
-
-
-3. APPLICATION ARCHITECTURE
----------------------------
-
-There are two different FastAPI applications:
-
-A. LinkedIn worker: app.linkedin_fresh_jobs:app
-   - Default local address: http://127.0.0.1:8000
-   - Starts a background polling task during FastAPI startup.
-   - Owns /health, /fresh-jobs, /digest/send, and authenticated /keep-alive.
-  - Uses the public guest-search endpoint, SQLite, and Telegram.
-
-B. Import API: app.main:app
-   - Can run on a separate port, such as http://127.0.0.1:8001.
-   - Owns /health and /jobs/import.
-   - Receives manually submitted or authorized-feed jobs and optionally sends
-    immediate Telegram alerts for recent jobs.
-
-The authorized-feed connector is another process. It polls a feed URL, then
-submits records to app.main's /jobs/import endpoint. If the LinkedIn worker is
-already using port 8000, run the import API on port 8001 and change JOBIE_API_URL
-to http://127.0.0.1:8001/jobs/import.
-
-The main LinkedIn worker data flow is:
-
-1. Validate required environment configuration and timezone.
-2. Open or create jobie.db and migrate the worker's tables if needed.
-3. Search the configured keywords and location for the lookback window.
-4. Request up to the configured number of pages and parse job cards.
-5. Accept HTTPS links on LinkedIn's normal /jobs/view/ path and extract the job
-   ID, title, company, location, URL, and source posting timestamp.
-6. Reject missing, invalid, future, or out-of-window posting timestamps.
-7. Insert unseen jobs or update metadata for already-seen jobs in SQLite.
-8. Send an immediate alert only for a newly inserted job in the immediate-alert
-   age window.
-9. At the first poll at or after the configured local send time, send one daily
-   digest for that local date.
-10. If digest bots are configured, send each rolling digest after the startup
-    search and again at that bot's interval, using jobs posted within its window.
-11. Sleep until the next poll or rolling-digest deadline, then repeat.
-
-
-4. SEARCH, ALERT, AND DIGEST BEHAVIOR
--------------------------------------
-
-Search configuration:
-- LINKEDIN_SEARCH_KEYWORDS defaults to "software engineer".
-- LINKEDIN_SEARCH_LOCATION defaults to "Gurugram, Haryana, India".
-- LINKEDIN_POLL_INTERVAL_SECONDS defaults to 120 seconds.
-- LINKEDIN_LOOKBACK_HOURS defaults to 24 hours.
-- LINKEDIN_MAX_SEARCH_PAGES defaults to five and is capped at ten by the code.
-- Each search page uses a 25-item offset.
-
-Posting timestamps are parsed as ISO-8601. A timestamp without an explicit
-timezone is treated as UTC. The worker only keeps postings between now and the
-configured lookback duration; future-dated postings are rejected.
-
-Immediate alerts:
-- A job must be newly inserted into the worker's seen_jobs table.
-- Its posting time must be within RECENT_JOB_WINDOW_SECONDS, 180 seconds by
-  default.
-- The Telegram message includes title, company, and HTTPS job link.
-- If a job is found but Telegram delivery fails, the worker logs a warning. Since
-  the job is already marked seen, it is not automatically retried as an
-  immediate alert.
-
-Daily digest:
-- LINKEDIN_LOOKBACK_HOURS controls the rolling window, 24 hours by default.
-- DAILY_DIGEST_TIME defaults to 18:00 in DAILY_DIGEST_TIMEZONE, defaulting to
-  Asia/Kolkata.
-- The worker checks the due time on each poll, so scheduled delivery can be
-  delayed by the poll duration plus one polling interval.
-- digest_runs stores the local date after a successful scheduled delivery so
-  the scheduled digest is not repeated for the same date after restart.
-- Empty results produce no Telegram message. Scheduled daily digests remain
-  eligible and are checked again on later polls until a non-empty digest sends.
-- Rolling digest cycles with no deliverable jobs send nothing but record their
-  check time, then retry at that interval.
-- Long digests are split into bounded Telegram messages.
-- Manual sends are limited by MANUAL_DIGEST_MAX_PER_DAY (3 by default) and
-  MANUAL_DIGEST_COOLDOWN_SECONDS (300 seconds by default). Reservations persist
-  in SQLite. Failed manual deliveries also consume a reservation.
-- These manual limits do not restrict the scheduled digest.
-
-Rolling digests:
-- Each interval has a separate bot token and private chat ID. Leave both empty
-  to disable that interval. Supported periods are 5 minutes, 15 minutes,
-  30 minutes, 1 hour, and 10 hours.
-- A missing or malformed pair disables only its bot; it does not block startup or
-  delivery from the other configured bots.
-- Each digest is sent after the startup search and again at its own interval.
-- Digests contain stored listings posted within that period, including HTTPS
-  job links. Results are limited by the LinkedIn page cap and are not exhaustive.
-- Timers are in memory; restarting the worker sends fresh initial digests.
-
-The worker must remain running for automatic searches and scheduled digest
-delivery. The /digest/send endpoint can be called while the worker is running to
-send a digest immediately.
-
-
-5. HTTP ENDPOINTS
------------------
-
-LinkedIn worker, normally http://127.0.0.1:8000:
-
-GET /health
-  Readiness and safe status metadata. Returns HTTP 503 before the first
-  successful poll or if polling is considered stale. It does not require the
-  bearer token and does not return job details or secrets. It includes the last
-  rolling second-bot digest timestamp when that feature is enabled.
-
-GET /fresh-jobs?peek=true
-  Returns the current in-memory list of newly discovered jobs. Requires:
-  Authorization: Bearer <JOBIE_API_TOKEN>
-  peek=true leaves the in-memory list intact. Without peek=true, reading clears
-  it. This buffer is limited to 1,000 jobs and resets when the worker restarts.
-  The daily digest reads SQLite and is independent of this buffer.
-
-POST /digest/send
-  Sends a digest immediately. Requires the same bearer token. Subject to the
-  persistent daily quota and cooldown described above. The response reports
-  job_count and message_count.
-
-Import and webhook API, normally http://127.0.0.1:8001 if the worker uses 8000:
-
-GET /health
-  Basic API liveness response. Does not check the LinkedIn worker or Telegram.
-
-POST /jobs/import
-  Requires Authorization: Bearer <JOBIE_API_TOKEN>. Accepts a JSON object with
-  job_id, title, company, and url. Optional values are posted_at and source.
-  Extra JSON fields are rejected. Field lengths are limited, and job URLs must
-  use HTTPS. Duplicate job IDs do not cause another import or alert.
-
-The /jobs/import and /digest/send endpoints can send Telegram messages. Test them
-only after confirming the configured recipient.
-
-
-6. SQLITE DATABASE
-------------------
-
-The default database is jobie.db in the repository root. Relative DATABASE_PATH
-values are resolved relative to the repository, not the current shell directory.
-Absolute custom paths are also supported. The database is not encrypted at rest;
-protect the machine, file permissions, and backups.
-
-The app's general import API initializes these tables:
-
-jobs_seen
-  Stores imported jobs, a unique job_id, URL, posting time, first-seen time, and
-  a local status value.
-
-jobs_applied
-  Schema placeholder for applied-job history. Current code does not write to it
-  or submit applications.
-
-alerts_sent
-  Schema placeholder for alert history. Current code does not write to it.
-
-The LinkedIn worker initializes these tables in the same database:
-
-seen_jobs
-  Primary key job_id; title, company, first_seen, URL, and posted_at. Older
-  versions of the worker schema are migrated by adding URL and posted_at columns.
-  Rows whose first_seen is more than seven days old are pruned during polling.
-
-digest_runs
-  One record per local calendar date for successfully completed scheduled
-  digests.
-
-manual_digest_runs
-  Records each reserved manual digest request, its local date, UTC request time,
-  and pending/sent/failed state. These records enforce the daily quota and
-  cooldown across restarts.
-
-The worker's seen_jobs table and the import API's jobs_seen table are separate
-deduplication domains even though they share the same SQLite file. Importing a
-job through one path does not automatically mark it seen in the other table.
-
-
-7. ENVIRONMENT SETTINGS
+4. MAIN WORKER BEHAVIOR
 -----------------------
 
-Create .env by copying .env.example. Do not commit .env or share its contents.
+Defaults from current configuration include:
 
-Database and logging:
-- DATABASE_PATH: SQLite path; default jobie.db in the repository root.
-- LOG_PATH: log file; default logs/jobie.log.
-- PROFILE_PATH: candidate profile JSON path. The LinkedIn worker does not use
-  this profile.
+- `LINKEDIN_POLL_INTERVAL_SECONDS=600`.
+- `LINKEDIN_LOOKBACK_HOURS=24`.
+- `LINKEDIN_MAX_SEARCH_PAGES=2`, capped at ten by the worker.
+- `RECENT_JOB_WINDOW_SECONDS=180`.
+- `DAILY_DIGEST_TIME=18:00` in `Asia/Kolkata`.
 
-API and Telegram configuration:
-- JOBIE_API_TOKEN: required strong random token, at least 32 characters. Protects
-  job imports, /fresh-jobs, and manual digest requests.
-- TELEGRAM_BOT_TOKEN: private bot token issued by @BotFather.
-- TELEGRAM_CHAT_ID: destination private chat ID; send /start to the bot first.
-- TELEGRAM_DIGEST_BOT_TOKEN and TELEGRAM_DIGEST_CHAT_ID: optional 10-hour bot.
-- TELEGRAM_DIGEST_5M_BOT_TOKEN and TELEGRAM_DIGEST_5M_CHAT_ID: optional 5-minute bot.
-- TELEGRAM_DIGEST_15M_BOT_TOKEN and TELEGRAM_DIGEST_15M_CHAT_ID: optional 15-minute bot.
-- TELEGRAM_DIGEST_30M_BOT_TOKEN and TELEGRAM_DIGEST_30M_CHAT_ID: optional 30-minute bot.
-- TELEGRAM_DIGEST_1H_BOT_TOKEN and TELEGRAM_DIGEST_1H_CHAT_ID: optional 1-hour bot.
-- TELEGRAM_DIGEST_INTERVAL_HOURS: 10-hour bot interval; default 10.
+The main worker only accepts valid LinkedIn HTTPS job links, rejects missing,
+future, or out-of-window timestamps, and alerts once for each newly inserted
+job ID. Scheduled digest and manual-send limits are persisted in PostgreSQL.
+Search and digest coverage is bounded by the public endpoint and page cap; it
+is not exhaustive.
 
-LinkedIn worker:
-- LINKEDIN_SEARCH_KEYWORDS: search term or terms.
-- LINKEDIN_SEARCH_LOCATION: source search location.
-- LINKEDIN_POLL_INTERVAL_SECONDS: interval in seconds; default 120.
-- LINKEDIN_LOOKBACK_HOURS: search/digest window; default 24.
-- LINKEDIN_MAX_SEARCH_PAGES: pages per poll; default five, hard maximum ten.
-- RECENT_JOB_WINDOW_SECONDS: age limit for immediate alerts; default 180.
-- DAILY_DIGEST_TIME: local 24-hour HH:MM; default 18:00.
-- DAILY_DIGEST_TIMEZONE: IANA timezone; default Asia/Kolkata.
-- MANUAL_DIGEST_MAX_PER_DAY: manual digest limit per local day; default 3.
-- MANUAL_DIGEST_COOLDOWN_SECONDS: manual digest spacing; default 300.
+5. IMPORTANT SETTINGS
+---------------------
 
-Authorized JSON feed connector:
-- AUTHORIZED_JOB_FEED_URL: a feed URL you are authorized to access.
-- AUTHORIZED_JOB_FEED_TOKEN: optional bearer credential for that feed.
-- JOBIE_API_URL: import API target; default localhost port 8000.
-- FEED_POLL_SECONDS: authorized-feed interval; default 120.
-- JOBIE_API_TOKEN: same API token expected by /jobs/import.
+Required/common:
 
-Other settings:
-- POLL_INTERVAL_SECONDS belongs to the idle maintenance scheduler, not the
-  LinkedIn poller.
-- TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env must be replaced with the
-  token and private chat ID for your bot.
-- Set both token and chat ID for each rolling bot to enable it. An incomplete or
-  malformed pair is skipped without affecting other bots.
+- `SUPABASE_DB_URL`: pooled Supabase PostgreSQL URL.
+- `JOBIE_API_TOKEN`: strong bearer token for protected endpoints.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: main outbound Telegram pair.
+- `LINKEDIN_SEARCH_KEYWORDS`, `LINKEDIN_SEARCH_LOCATION`: search settings.
 
+Main worker options include `LINKEDIN_POLL_INTERVAL_SECONDS`,
+`LINKEDIN_LOOKBACK_HOURS`, `LINKEDIN_MAX_SEARCH_PAGES`,
+`RECENT_JOB_WINDOW_SECONDS`, `DAILY_DIGEST_TIME`,
+`DAILY_DIGEST_TIMEZONE`, `MANUAL_DIGEST_MAX_PER_DAY`, and
+`MANUAL_DIGEST_COOLDOWN_SECONDS`. Optional rolling digest bot pairs use the
+`TELEGRAM_DIGEST_*` settings.
 
-8. SETUP AND RUN COMMANDS (WINDOWS)
------------------------------------
+Watcher options are `FRESH_WATCHER_BOT_TOKEN`, `FRESH_WATCHER_CHAT_ID`,
+`FRESH_WATCHER_INTERVAL`, and `FRESH_WATCHER_LOOKBACK`. `LINKEDIN_PROXY_URL`
+is optional; use only a proxy you are authorized to use.
 
-From the repository root:
+Authorized feed options are `AUTHORIZED_JOB_FEED_URL`,
+`AUTHORIZED_JOB_FEED_TOKEN`, `JOBIE_API_URL`, and `FEED_POLL_SECONDS`.
 
-    python -m venv .venv
-    .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-    if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-    notepad .env
-    .\.venv\Scripts\python.exe -m scripts.bootstrap_db
+6. RUNNING AND DEPLOYMENT
+-------------------------
 
-Generate a token with:
-
-    .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"
-
-Start the automatic LinkedIn search and digest worker:
+Local commands:
 
     .\.venv\Scripts\python.exe -m uvicorn app.linkedin_fresh_jobs:app --host 127.0.0.1 --port 8000
-
-Start the separate import API in a different terminal and on a different port:
-
+    .\.venv\Scripts\python.exe -m app.fresh_watcher
     .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 
-Start the authorized-feed connector only if you configured an authorized feed
-and the import API is running:
+The last command is optional. On Render, create separate Background Worker
+services using the two Render start commands in section 3. Set environment
+variables in Render rather than committing secrets. `runtime.txt` pins Python
+3.14.3.
 
-    .\.venv\Scripts\python.exe -m scripts.poll_authorized_feed
+7. FILE REFERENCE
+-----------------
 
-The feed connector can run a single poll with:
+- `app/linkedin_fresh_jobs.py`: main search worker and API routes.
+- `app/fresh_watcher.py`: separate ultra-fresh watcher process.
+- `app/main.py`: authenticated import API.
+- `app/db.py`: Supabase/PostgreSQL pool and schema initialization.
+- `app/config.py`: environment-backed settings.
+- `app/messaging.py`: outbound Telegram alerts and digests.
+- `scripts/poll_authorized_feed.py`: optional authorized-feed client.
+- `tests/`: automated checks.
+- `.env.example`: sanitized environment template; replace every placeholder.
 
-    .\.venv\Scripts\python.exe -m scripts.poll_authorized_feed --once
-
-The CSV importer reads a CSV file and directly inserts new records into jobs_seen:
-
-    .\.venv\Scripts\python.exe -m scripts.import_jobs_csv path\to\jobs.csv
-
-CSV import does not go through /jobs/import, so it does not apply that endpoint's
-recent-job check or send its optional Telegram alert.
-
-
-9. TESTING
-----------
-
-Run the automated test suite:
-
-    .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-
-The current tests cover:
-- 24-hour database filtering.
-- Migration of the older seen_jobs schema.
-- Scheduled digest once-per-local-date behavior.
-- Manual digest quota and cooldown persistence.
-- Authenticated manual digest endpoint behavior.
-- Healthy and stale worker-health responses.
-- Telegram digest message chunking and link inclusion.
-- Five rolling-bot time windows, recipient routing, and interval gating.
-
-Compile the Python code without contacting LinkedIn or Telegram:
-
-    .\.venv\Scripts\python.exe -m compileall -q app scripts tests
-
-Some tests mock Telegram HTTP requests and use temporary SQLite databases.
-They do not prove that LinkedIn currently returns the expected HTML or that
-Telegram will deliver to a real chat. Verify those integrations separately
-with a controlled account and recipient.
-
-
-10. SECURITY AND DEPLOYMENT NOTES
----------------------------------
-
-- The development commands bind Uvicorn to 127.0.0.1. Do not bind the
-  development server directly to a public network interface.
-- Protect .env, the API token, Telegram bot token, jobie.db, and database backups.
-- The job import body is bounded and validated; requests without a sufficiently
-  long bearer token are rejected.
-- The feed connector requires HTTPS for remote URLs and limits response size and
-  number of job records. Plain HTTP is allowed only to loopback services.
-- The manual digest limit helps control accidental sends, but it does not replace
-  firewall rules, rate limits at a reverse proxy, secret rotation, monitoring,
-  or operating-system access controls.
-- SQLite is intended for a local, single-machine deployment. Multiple worker
-  processes or multiple machines require additional coordination and should not
-  be assumed safe just because the API token is shared.
-- Configure process supervision, log rotation, backups, and alerting before
-  depending on the service continuously.
-
-This project has safeguards but is not certified or guaranteed production
-secure. Its LinkedIn guest endpoint is not an official API; evaluate source terms
-and reliability before relying on it.
-
-
-11. FILE-BY-FILE REFERENCE
---------------------------
-
-app/main.py
-  Import API, health route, validated job model, and bearer-token enforcement.
-
-app/linkedin_fresh_jobs.py
-  LinkedIn guest-search parser and background worker; SQLite persistence,
-  immediate alerts, daily and optional rolling digest scheduling, health
-  endpoint, and authenticated /fresh-jobs and /digest/send endpoints.
-
-app/config.py
-  Loads .env and constructs settings. Relative DATABASE_PATH values resolve
-  against the repository root.
-
-app/security.py
-  Shared constant-time bearer-token comparison and global request-body limit
-  middleware used by the import API.
-
-app/db.py
-  Initializes the import API's jobs_seen, jobs_applied, and alerts_sent tables.
-
-app/job_intake.py
-  Validates required job fields, normalizes values, and deduplicates imported
-  jobs in jobs_seen.
-
-app/freshness.py
-  Parses ISO timestamps and checks posting age against a configured duration.
-
-app/messaging.py
-  Telegram outbound immediate alerts and chunked digest messages.
-
-app/logging_setup.py
-  File logger setup; the default log is logs/jobie.log.
-
-app/profile.py
-  Reads the JSON candidate profile and can map it to generic form values. No
-  active job application workflow calls it.
-
-app/models.py
-  Dataclasses for jobs and approvals. These are not the active API schema and
-  are not currently used by the monitor.
-
-app/scheduler.py and scripts/run_scheduler.py
-  Maintenance scheduler. Its run_once method logs that it is idle; it does not
-  search LinkedIn or poll an authorized feed.
-
-scripts/poll_authorized_feed.py
-  Optional polling client for a separately configured authorized JSON feed. It
-  submits jobs to app.main's authenticated /jobs/import endpoint.
-
-scripts/import_jobs_csv.py
-  Batch-imports CSV records directly into SQLite.
-
-scripts/bootstrap_db.py
-  Initializes the import API's database schema.
-
-tests/test_digest.py
-  Standard-library unittest coverage for digest persistence, scheduling,
-  quotas, health, and message formatting.
-
-config/jobs.example.csv and config/jobs.example.json
-  Sample job records for imports and feeds.
-
-config/candidate_profile.json
-  Placeholder profile data. Replace or remove personal information as needed;
-  this file is not used by automated job search.
-
-requirements.txt
-  Pinned direct Python dependencies, including FastAPI, requests, BeautifulSoup,
-  and timezone data for Windows.
-
-README.md
-  Main project setup and operating instructions.
-
-HOW_TO_TEST.txt
-  Detailed user-focused setup and test checklist.
-
-prompt.md
-  Older design notes describing a Playwright login/scrape/auto-apply concept.
-  Those ideas are not implemented and conflict with the current safety boundary.
-  Do not use this file as a description of current runtime behavior.
-
-.env.example
-  Environment variable template. Copy it to .env and replace sample values.
-
-.gitignore
-  Excludes .env, local databases, logs, bytecode, and virtual environments from
-  version control.
+Keep services bound to localhost in development, use HTTPS remotely, protect
+database URLs and tokens, and review listings before manual action.
