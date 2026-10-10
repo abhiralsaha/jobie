@@ -1,4 +1,4 @@
-﻿"""
+"""
 app/keepalive_agent.py
 ======================
 Self-pinging keep-alive agent that runs as a daemon thread inside the
@@ -61,11 +61,14 @@ class KeepAliveAgent:
 
     def start(self) -> None:
         """Start the background pinger thread."""
-        logger.info(
-            "[KeepAliveAgent] started – pinging %s every %d min (%d pings/cycle)",
-            self.base_url, CYCLE_MINUTES, PINGS_PER_CYCLE,
-        )
+        logger.info("=" * 65)
+        logger.info("  KeepAlive Agent  —  STARTING UP")
+        logger.info("  Target  : %s", self.base_url)
+        logger.info("  Schedule: %d ping(s) every %d minutes  (24/7)", PINGS_PER_CYCLE, CYCLE_MINUTES)
+        logger.info("  Purpose : Prevent Render free-tier spin-down")
+        logger.info("=" * 65)
         self._thread.start()
+        logger.info("[KeepAliveAgent] Status: RUNNING — background thread started")
 
     def stop(self) -> None:
         """Signal the thread to stop and wait for it to exit."""
@@ -97,7 +100,10 @@ class KeepAliveAgent:
             return False
 
     def _run_cycle(self, cycle: int) -> None:
-        logger.info("[KeepAliveAgent] cycle #%d – sending %d pings", cycle, PINGS_PER_CYCLE)
+        logger.info(
+            "[KeepAliveAgent] ── Cycle #%d starting ── sending %d ping(s) to %s",
+            cycle, PINGS_PER_CYCLE, self.base_url,
+        )
         for i in range(1, PINGS_PER_CYCLE + 1):
             if self._stop_evt.is_set():
                 return
@@ -111,6 +117,7 @@ class KeepAliveAgent:
                 self._stop_evt.wait(timeout=PING_GAP_SEC)
 
     def _run(self) -> None:
+        HEARTBEAT_EVERY = 5   # print heartbeat every N cycles (~every 70 min)
         cycle = 0
         while not self._stop_evt.is_set():
             cycle += 1
@@ -118,6 +125,23 @@ class KeepAliveAgent:
                 self._run_cycle(cycle)
             except Exception as exc:          # never let the thread die silently
                 logger.exception("[KeepAliveAgent] unexpected error in cycle #%d: %s", cycle, exc)
+
+            if self._stop_evt.is_set():
+                break
+
+            # Heartbeat every N cycles
+            if cycle % HEARTBEAT_EVERY == 0:
+                logger.info(
+                    "[KeepAliveAgent] *** HEARTBEAT — cycle #%d — agent is ALIVE "
+                    "and working 24/7 (pinging every %d min) ***",
+                    cycle, CYCLE_MINUTES,
+                )
+
+            logger.info(
+                "[KeepAliveAgent] ── Cycle #%d done — next ping burst in %d min ──",
+                cycle, CYCLE_MINUTES,
+            )
             # Sleep for CYCLE_MINUTES, but wake up immediately if stop() is called
             self._stop_evt.wait(timeout=CYCLE_MINUTES * 60)
-        logger.info("[KeepAliveAgent] thread exiting")
+        logger.info("[KeepAliveAgent] thread exiting — agent stopped")
+

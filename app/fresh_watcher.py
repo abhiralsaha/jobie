@@ -200,23 +200,40 @@ def is_new_job(job: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def _build_notifier() -> TelegramNotifier | None:
+    """Resolve which Telegram bot to use and log the result clearly."""
     token = os.getenv("FRESH_WATCHER_BOT_TOKEN", "").strip() or getattr(settings, "FRESH_WATCHER_BOT_TOKEN", "").strip()
     chat_id = os.getenv("FRESH_WATCHER_CHAT_ID", "").strip() or getattr(settings, "FRESH_WATCHER_CHAT_ID", "").strip()
+
     if token and chat_id:
         n = TelegramNotifier(token, chat_id)
         if n.is_configured:
-            _log.info("Using dedicated FRESH_WATCHER Telegram bot (token=%s...)", token[:8])
+            _log.info(
+                "[FreshWatcher] Telegram bot : DEDICATED (FRESH_WATCHER_BOT_TOKEN=%s...)  "
+                "chat_id=%s",
+                token[:8], chat_id,
+            )
             return n
-        else:
-            _log.warning("FRESH_WATCHER credentials provided but invalid format.")
-    # Fall back to the main bot credentials
+        _log.warning(
+            "[FreshWatcher] FRESH_WATCHER_BOT_TOKEN / FRESH_WATCHER_CHAT_ID provided "
+            "but failed validation — falling back to main bot."
+        )
+
+    # Fall back to the main bot
     n = TelegramNotifier()
     if n.is_configured:
         _log.info(
-            "Dedicated FRESH_WATCHER_BOT_TOKEN / CHAT_ID not set — "
-            "falling back to main TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"
+            "[FreshWatcher] Telegram bot : FALLBACK (main TELEGRAM_BOT_TOKEN=%s...)  "
+            "chat_id=%s  "
+            "(set FRESH_WATCHER_BOT_TOKEN + FRESH_WATCHER_CHAT_ID to use a dedicated bot)",
+            settings.TELEGRAM_BOT_TOKEN[:8] if settings.TELEGRAM_BOT_TOKEN else "???",
+            settings.TELEGRAM_CHAT_ID,
         )
         return n
+
+    _log.error(
+        "[FreshWatcher] No valid Telegram bot found. "
+        "Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (or dedicated FRESH_WATCHER_* vars) in .env"
+    )
     return None
 
 
@@ -266,40 +283,54 @@ async def _prune_loop() -> None:
 # ---------------------------------------------------------------------------
 
 async def run() -> None:
-    _log.info(
-        "Starting fresh_watcher — keywords=%r  location=%r  "
-        "lookback=%ds  poll_interval=~%ds",
-        KEYWORDS,
-        LOCATION,
-        LOOKBACK_SECONDS,
-        POLL_INTERVAL,
-    )
+    # ── Startup banner ────────────────────────────────────────────────────
+    _log.info("=" * 65)
+    _log.info("  Fresh Watcher 24/7 Worker  —  STARTING UP")
+    _log.info("  Searches LinkedIn every ~%ds for jobs posted <= %ds ago", POLL_INTERVAL, LOOKBACK_SECONDS)
+    _log.info("  Keywords : %s", KEYWORDS)
+    _log.info("  Location : %s", LOCATION)
+    _log.info("=" * 65)
 
     await asyncio.to_thread(init_db)
+    _log.info("[FreshWatcher] Database initialised OK")
 
     notifier = _build_notifier()
     if notifier is None:
         # Don't exit — Render would see exit-code 0 and not restart.
         # Loop with a loud warning until the operator sets the env vars and redeploys.
         _log.error(
-            "FATAL: No Telegram bot configured. "
+            "[FreshWatcher] FATAL: No Telegram bot configured. "
             "Set FRESH_WATCHER_BOT_TOKEN + FRESH_WATCHER_CHAT_ID "
             "(or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID) and redeploy. "
             "Sleeping forever until then."
         )
         while True:
             await asyncio.sleep(300)
-            _log.error("Still waiting for Telegram credentials — bot is idle.")
+            _log.error("[FreshWatcher] Still waiting for Telegram credentials — bot is idle.")
 
-    _log.info("Telegram OK. Entering 24/7 poll loop...")
+    _log.info("[FreshWatcher] Telegram OK. Entering 24/7 poll loop ...")
+    _log.info("[FreshWatcher] Status: RUNNING  |  interval=~%ds  |  lookback=%ds", POLL_INTERVAL, LOOKBACK_SECONDS)
+
+    poll_count = 0
+    HEARTBEAT_EVERY = 10   # log a heartbeat every N polls
 
     while True:
         # ── Circuit breaker ───────────────────────────────────────────────
         is_open, remaining = http_client.circuit_is_open()
         if is_open:
-            _log.info("Circuit breaker OPEN — %ds remaining", remaining)
+            _log.info("[FreshWatcher] Circuit breaker OPEN — %ds remaining", remaining)
             await asyncio.sleep(min(60, remaining))
             continue
+
+        poll_count += 1
+
+        # ── Heartbeat (every 10 polls ≈ every ~10 min) ────────────────────
+        if poll_count % HEARTBEAT_EVERY == 0:
+            _log.info(
+                "[FreshWatcher] *** HEARTBEAT — poll #%d — 24/7 worker is alive "
+                "(interval=~%ds, lookback=%ds) ***",
+                poll_count, POLL_INTERVAL, LOOKBACK_SECONDS,
+            )
 
         # ── Fetch ─────────────────────────────────────────────────────────
         try:
@@ -307,12 +338,12 @@ async def run() -> None:
         except RuntimeError as exc:
             cooldown = http_client.trip_circuit()
             _log.error(
-                "Circuit breaker TRIPPED (%s). Pausing %ds.", exc, cooldown
+                "[FreshWatcher] Circuit breaker TRIPPED (%s). Pausing %ds.", exc, cooldown
             )
             await asyncio.sleep(60)
             continue
         except Exception as exc:
-            _log.warning("Fetch error — retrying next cycle: %s", exc)
+            _log.warning("[FreshWatcher] Fetch error — retrying next cycle: %s", exc)
             await asyncio.sleep(POLL_INTERVAL)
             continue
 
@@ -320,7 +351,7 @@ async def run() -> None:
         try:
             jobs = await asyncio.to_thread(parse_jobs, html)
         except Exception as exc:
-            _log.warning("Parse error: %s", exc)
+            _log.warning("[FreshWatcher] Parse error: %s", exc)
             jobs = []
 
         # ── Dedup & alert ─────────────────────────────────────────────────
@@ -331,14 +362,15 @@ async def run() -> None:
                     new_count += 1
                     await asyncio.to_thread(send_alert, notifier, job)
             except Exception as exc:
-                _log.warning("Error handling job %s: %s", job.get("job_id"), exc)
-
-        _log.info(
-            "Poll done — %d on page, %d new alert(s) fired", len(jobs), new_count
-        )
+                _log.warning("[FreshWatcher] Error handling job %s: %s", job.get("job_id"), exc)
 
         # ── Sleep with jitter ─────────────────────────────────────────────
         sleep_for = max(10, POLL_INTERVAL + random.uniform(-JITTER_RANGE, JITTER_RANGE))
+        _log.info(
+            "[FreshWatcher] Poll #%d done — %d on page, %d new alert(s) fired | "
+            "next poll in %.0fs",
+            poll_count, len(jobs), new_count, sleep_for,
+        )
         await asyncio.sleep(sleep_for)
 
 
