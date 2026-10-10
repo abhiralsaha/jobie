@@ -25,6 +25,7 @@ from app import http_client
 from app.config import settings
 from app.db import get_connection, init_db
 from app.freshness import parse_timestamp, posted_within_seconds
+from app.keepalive_agent import KeepAliveAgent
 from app.logging_setup import setup_logger
 from app.messaging import TelegramNotifier
 from app.security import require_api_bearer_token
@@ -609,9 +610,18 @@ async def lifespan(app: FastAPI):
     app.state.last_digest_sent_at = None
     app.state.last_rolling_digest_checked_at = {}
     task = asyncio.create_task(poll_loop(digest_timezone, digest_time))
+
+    # Keep-alive agent: pings this service every 14 min so Render free-tier
+    # never sees it as idle and spins it down.
+    if not settings.RENDER_EXTERNAL_URL:
+        raise RuntimeError("Set RENDER_EXTERNAL_URL in your .env file (e.g. https://jobie-gu7t.onrender.com/)")
+    keepalive = KeepAliveAgent(base_url=settings.RENDER_EXTERNAL_URL)
+    keepalive.start()
+
     try:
         yield
     finally:
+        keepalive.stop()
         task.cancel()
         try:
             await task

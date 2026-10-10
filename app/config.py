@@ -66,5 +66,10 @@ class Settings:
     JOBIE_API_URL: str = os.getenv("JOBIE_API_URL", "http://127.0.0.1:8000/jobs/import")
     FEED_POLL_SECONDS: int = int(os.getenv("FEED_POLL_SECONDS", "120"))
 
+    # ── Keep-alive agent ────────────────────────────────────────────────
+    # The public URL of this Render service. The keep-alive agent pings it
+    # every 14 minutes so Render free-tier never spins the service down.
+    RENDER_EXTERNAL_URL: str = os.getenv("RENDER_EXTERNAL_URL", "")
+
 
 settings = Settings()
