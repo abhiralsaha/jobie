@@ -254,6 +254,22 @@ class PollerTests(Base):
         self.assertEqual(ApprovalPoller(self.ap, self.store, self.tg).poll_once(), 2)
         self.assertEqual(self.store.kv_get(f"tg_offset:{self.ap.control.bot_id}"), "3")
 
+    def test_dry_run_poller_never_processes_an_email_approval(self):
+        self.s = replace(self.s, dry_run=True)
+        self.ap.s = self.s
+        self.tg.updates = [{"update_id": 5, "callback_query": {
+            "id": "cb-dry-run", "from": {"id": AUTH_USER},
+            "message": {"chat": {"id": int(CONTROL_CHAT)}},
+            "data": f"a:{self.draft.draft_id}:{self.draft.content_hash[:12]}",
+        }}]
+
+        self.assertEqual(ApprovalPoller(self.ap, self.store, self.tg).poll_once(), 1)
+
+        self.assertEqual(self.row()["state"], "pending")
+        self.assertEqual(self.mailer.sent, [])
+        callback = [c for c in self.tg.calls if c["method"] == "answerCallbackQuery"][-1]
+        self.assertIn("AI_DRY_RUN=true", callback["payload"]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

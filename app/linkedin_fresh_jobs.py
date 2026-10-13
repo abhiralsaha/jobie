@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import http_client
+from app.ai_pipeline import hook as ai_hook
 from app.config import settings
 from app.db import get_connection, init_db
 from app.freshness import parse_timestamp, posted_within_seconds
@@ -529,6 +530,18 @@ async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
                 if not posted_within_seconds(
                     job.get("posted_at") or "", settings.RECENT_JOB_WINDOW_SECONDS
                 ):
+                    continue
+                if ai_hook.enabled():
+                    ai_hook.set_project_http_client()
+                    ai_hook.on_new_job(
+                        job_id=job["job_id"],
+                        title=job.get("title") or "",
+                        company=job.get("company") or "",
+                        location=job.get("location") or "",
+                        url=job["url"],
+                        posted_at=job.get("posted_at"),
+                        source="linkedin_search",
+                    )
                     continue
                 try:
                     await asyncio.to_thread(

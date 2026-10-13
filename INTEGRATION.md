@@ -19,6 +19,16 @@ under `jobie_ai_addon/` as the unmodified input copy.
 - The watcher widens its LinkedIn `f_TPR` look-back to cover the time since its
   last successful poll (up to 24 hours), including after restarts. The existing
   `seen_jobs` table continues to deduplicate.
+- The watcher runs an owner-only Telegram agent in the same `getUpdates`
+  long-poll loop as referral approvals. It supports `/start`, `/help`, `/status`,
+  `/jobs`, `/ai`, `/digest`, `/search`, `/retry`, inline menu buttons, and
+  allow-listed GPT-backed natural-language requests. Search and retry actions
+  require a separate confirmation; email still requires the existing explicit
+  approval button. In dry-run mode the agent can answer commands, but job
+  notifications are recorded and approval callbacks cannot send email.
+- The main LinkedIn search worker also routes newly found jobs through the AI
+  pipeline when enabled, rather than sending its raw alert. Its new-job records
+  are processed by the existing watcher-side retry scheduler.
 
 ## Required operator setup
 
@@ -35,7 +45,11 @@ under `jobie_ai_addon/` as the unmodified input copy.
 5. On Render, use `deploy/Dockerfile.addon` for the watcher if it must compile
    resumes. Enable the approval poller on that watcher only. Never configure a
    second poller or webhook for the control bot.
-6. Run `python -m app.ai_pipeline.cli check-config`,
+6. For GPT Luna, set `AI_PROVIDER=openai_compat`, `AI_MODEL=gpt-luna`,
+   `AI_API_KEY`, and the provider-supplied `AI_BASE_URL`. Until credentials are
+   present, slash-command agent functions work, but free-text answers and
+   description classification cannot call the model.
+7. Run `python -m app.ai_pipeline.cli check-config`,
    `python -m app.ai_pipeline.cli check-destinations`, and the unit tests before
    enabling the live pipeline.
 

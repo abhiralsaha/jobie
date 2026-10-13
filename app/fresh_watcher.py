@@ -264,6 +264,39 @@ def send_alert(notifier: TelegramNotifier, job: dict) -> None:
         _log.warning("Telegram alert failed for job_id=%s: %s", job["job_id"], exc)
 
 
+def run_agent_search() -> dict[str, int]:
+    """Run an operator-requested fresh search through the existing dedupe path."""
+    is_open, remaining = http_client.circuit_is_open()
+    if is_open:
+        raise RuntimeError(f"LinkedIn circuit breaker is open for {remaining}s")
+    html = fetch_page(LOOKBACK_SECONDS)
+    jobs = parse_jobs(html)
+    new_count = 0
+    notifier = _build_notifier()
+    for job in jobs:
+        if not is_new_job(job):
+            continue
+        new_count += 1
+        if ai_hook.enabled():
+            ai_hook.on_new_job(
+                job_id=job["job_id"],
+                title=job.get("title") or "",
+                company=job.get("company") or "",
+                location=job.get("location") or "",
+                url=job["url"],
+                posted_at=job.get("posted_at"),
+                source="telegram_agent_search",
+            )
+        elif notifier:
+            send_alert(notifier, job)
+    _log.info(
+        "[FreshWatcher] Telegram-requested search completed: %d matching, %d newly discovered",
+        len(jobs),
+        new_count,
+    )
+    return {"matched": len(jobs), "new": new_count}
+
+
 # ---------------------------------------------------------------------------
 # Background maintenance: prune seen_jobs older than 7 days
 # ---------------------------------------------------------------------------

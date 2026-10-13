@@ -188,10 +188,20 @@ edited file. Never use the example resume facts as real candidate information.
 Set the AI settings in `.env` from `.env.example`:
 
 - `AI_PIPELINE_ENABLED=true` enables screening in the watcher and import API.
-- `AI_DRY_RUN=true` records Telegram/email effects without sending them.
-- Reuse an existing provider key or set `AI_PROVIDER`, `AI_API_KEY`, and
-  `AI_MODEL`. Set `AI_TELEGRAM_AUTHORIZED_USER_ID` to your numeric Telegram
-  user ID.
+- `AI_DRY_RUN=true` records job alerts and email effects rather than sending
+  them. The private Telegram agent still replies to its owner in dry-run mode;
+  approval buttons explicitly report that email was not sent.
+- The owner-only Telegram agent supports `/start`, `/help`, `/status`, `/jobs`,
+  `/ai`, `/digest`, `/search`, and `/retry`. Search and retry require a second
+  confirmation tap. Free-text questions use the configured AI model; actions
+  stay allow-listed, and chat text cannot approve an email.
+- Set `AI_TELEGRAM_AUTHORIZED_USER_ID` to your numeric Telegram user ID. The
+  bot also checks that messages come from its configured private control chat.
+- For GPT Luna, set `AI_PROVIDER=openai_compat`, `AI_MODEL=gpt-luna`,
+  `AI_API_KEY`, and the provider's `AI_BASE_URL` when you receive its API
+  credentials and endpoint. The current model is shared by chat and job
+  screening. The key and endpoint are not needed for deterministic slash
+  commands, but free-text AI answers and AI job screening require credentials.
 - Use the existing `SUPABASE_DB_URL` for durable pipeline state, or set
   `AI_DATABASE_URL`; SQLite is suitable only for local testing.
 - Add the bot token/chat ID environment variable pairs to the destination
@@ -208,6 +218,11 @@ offline demo. The tests and demo do not send real messages or email:
 .\.venv\Scripts\python.exe -m app.ai_pipeline.cli demo
 .\.venv\Scripts\python.exe -m unittest discover -s tests_ai -t .
 ```
+
+After setting the new bot token/chat IDs and authorized user ID, run the
+watcher with `AI_PIPELINE_ENABLED=true` and `AI_RUN_APPROVAL_POLLER=true`.
+Open the private control bot and send `/start`. The same single long-poll loop
+handles both agent messages/buttons and existing referral approval callbacks.
 
 Start the existing search/API worker and watcher in separate terminals as
 shown above. The watcher alone calls `start_background()` and should be the

@@ -163,6 +163,28 @@ class DigestTests(unittest.TestCase):
         self.assertIn("new", self.connection.tables["seen_jobs"])
         self.assertIn("new", " ".join(str(call) for call in log_info.call_args_list))
 
+    def test_poll_routes_new_jobs_to_ai_when_enabled(self):
+        now = datetime.now(timezone.utc).isoformat()
+        job = {"job_id": "ai-new", "title": "New role", "company": "Co",
+               "url": "https://www.linkedin.com/jobs/view/ai-new", "posted_at": now}
+        with patch.object(worker, "fetch_recent_jobs", return_value=[job]), \
+             patch.object(worker.http_client, "circuit_is_open", return_value=(False, 0)), \
+             patch.object(worker, "record_search_run"), \
+             patch.object(worker, "maybe_send_daily_digest", return_value=None), \
+             patch.object(worker, "maybe_send_rolling_digests", return_value=None), \
+             patch.object(worker.ai_hook, "enabled", return_value=True), \
+             patch.object(worker.ai_hook, "set_project_http_client") as set_http, \
+             patch.object(worker.ai_hook, "on_new_job") as submit, \
+             patch.object(worker.notifier, "send_alert") as send_alert, \
+             patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(worker.poll_loop(ZoneInfo("UTC"), time(0, 0)))
+
+        set_http.assert_called_once()
+        submit.assert_called_once()
+        send_alert.assert_not_called()
+        self.assertEqual(submit.call_args.kwargs["source"], "linkedin_search")
+
     def test_health_reports_success_and_stale_poll(self):
         worker.app.state.worker_started_at = "started"
         worker.app.state.last_poll_success_at = datetime.now(timezone.utc).isoformat()

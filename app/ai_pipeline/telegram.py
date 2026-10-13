@@ -173,7 +173,7 @@ class TelegramClient:
             log.warning("could not clear buttons: %s", exc)
 
     def get_updates(self, token: str, offset: int | None, timeout: int = 25) -> list[dict]:
-        payload = {"timeout": timeout, "allowed_updates": ["callback_query"]}
+        payload = {"timeout": timeout, "allowed_updates": ["message", "callback_query"]}
         if offset is not None:
             payload["offset"] = offset
         return self.call(token, "getUpdates", payload, timeout=timeout + 15) or []

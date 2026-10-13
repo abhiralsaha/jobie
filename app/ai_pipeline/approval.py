@@ -143,7 +143,7 @@ class ApprovalService:
     def handle_update(self, update: dict) -> str:
         """Process one Telegram update. Returns a short status string (used by tests/logs)."""
         cb = update.get("callback_query")
-        if not cb or not self.control:
+        if not isinstance(cb, dict) or not self.control:
             return "ignored"
         token, cb_id = self.control.token, cb.get("id", "")
         uid = (cb.get("from") or {}).get("id")
@@ -266,8 +266,8 @@ class ApprovalService:
 class ApprovalPoller:
     """Long-polls getUpdates for the control bot. Run in exactly ONE process."""
 
-    def __init__(self, service: ApprovalService, store: Store, tg: TelegramClient):
-        self.svc, self.store, self.tg = service, store, tg
+    def __init__(self, service: ApprovalService, store: Store, tg: TelegramClient, agent=None):
+        self.svc, self.store, self.tg, self.agent = service, store, tg, agent
 
     def poll_once(self, timeout: int = 25) -> int:
         ctrl = self.svc.control
@@ -278,7 +278,24 @@ class ApprovalPoller:
         updates = self.tg.get_updates(ctrl.token, int(offset) if offset else None, timeout)
         for u in updates:
             try:
-                self.svc.handle_update(u)
+                callback = u.get("callback_query")
+                callback = callback if isinstance(callback, dict) else {}
+                if self.agent and (
+                    u.get("message")
+                    or str(callback.get("data") or "").startswith("agent:")
+                ):
+                    self.agent.handle_update(u)
+                elif callback and self.svc.s.dry_run:
+                    ctrl = self.svc.control
+                    if ctrl:
+                        self.tg.answer_callback(
+                            ctrl.token,
+                            str(callback.get("id") or ""),
+                            "AI_DRY_RUN=true: referral email was not sent.",
+                            True,
+                        )
+                else:
+                    self.svc.handle_update(u)
             except Exception:  # noqa: BLE001 - one bad update must not wedge the queue
                 log.exception("failed handling update %s", u.get("update_id"))
             self.store.kv_set(key, str(int(u["update_id"]) + 1))

@@ -20,6 +20,30 @@ class FreshWatcherCatchupTests(unittest.TestCase):
 
         self.assertEqual(fetch.call_args.args[1]["f_TPR"], "r1830")
 
+    def test_telegram_search_uses_existing_dedup_and_ai_pipeline(self):
+        job = {
+            "job_id": "123456",
+            "title": "Software Engineer",
+            "company": "Example",
+            "location": "Remote",
+            "url": "https://www.linkedin.com/jobs/view/123456",
+            "posted_at": "2026-10-13T12:00:00+00:00",
+        }
+        with (
+            patch.object(fresh_watcher, "fetch_page", return_value="html"),
+            patch.object(fresh_watcher, "parse_jobs", return_value=[job]),
+            patch.object(fresh_watcher, "is_new_job", return_value=True),
+            patch.object(fresh_watcher, "_build_notifier") as build_notifier,
+            patch.object(fresh_watcher.ai_hook, "enabled", return_value=True),
+            patch.object(fresh_watcher.ai_hook, "on_new_job") as submit,
+        ):
+            result = fresh_watcher.run_agent_search()
+
+        self.assertEqual(result, {"matched": 1, "new": 1})
+        build_notifier.assert_called_once()
+        submit.assert_called_once()
+        self.assertEqual(submit.call_args.kwargs["source"], "telegram_agent_search")
+
 
 if __name__ == "__main__":
     unittest.main()

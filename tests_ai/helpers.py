@@ -33,7 +33,8 @@ def env_for(extra: dict | None = None) -> dict:
     for i, (k, _, _) in enumerate(NAMES):
         env[f"TOK_{k}"], env[f"CHAT_{k}"] = TOKEN(i + 1), CHATS[k]
     env["TOK_control"], env["CHAT_control"] = TOKEN(99), CONTROL_CHAT
-    env.update({"AI_PROVIDER": "anthropic", "AI_API_KEY": "test-key", "AI_TELEGRAM_AUTHORIZED_USER_ID": str(AUTH_USER),
+    env.update({"AI_PROVIDER": "anthropic", "AI_API_KEY": "test-key", "AI_DRY_RUN": "false",
+                "AI_TELEGRAM_AUTHORIZED_USER_ID": str(AUTH_USER),
                 "SMTP_HOST": "smtp.test", "SMTP_USER": "me@test.dev", "SMTP_PASSWORD": "pw", "SMTP_FROM": "me@test.dev",
                 "AI_MIN_DESC_CHARS": "120", "CONTACT_SEARCH_PROVIDER": "brave", "BRAVE_API_KEY": "x", "HUNTER_API_KEY": "y",
                 "AI_WORKER_THREADS": "2"})

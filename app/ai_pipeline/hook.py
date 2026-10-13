@@ -134,7 +134,13 @@ def start_background(*, run_poller: bool | None = None, tick_interval: float = 3
     _state["threads"].append(t1)
     want = p.s.run_approval_poller if run_poller is None else run_poller
     if want and p.approvals.control:
-        poller = ApprovalPoller(p.approvals, p.store, p.approvals.tg)
+        from .agent import TelegramAgent
+
+        from app.fresh_watcher import run_agent_search
+
+        control_tg = TelegramClient() if p.s.dry_run else p.approvals.tg
+        agent = TelegramAgent(p, control_tg, search=run_agent_search)
+        poller = ApprovalPoller(p.approvals, p.store, control_tg, agent=agent)
         t2 = threading.Thread(target=poller.run_forever, args=(stop,), daemon=True, name="ai-approvals")
         t2.start()
         _state["threads"].append(t2)
