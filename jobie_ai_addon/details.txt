@@ -1,0 +1,40 @@
+The zip is `jobie_ai_addon.zip`. It's built against the project overview you pasted, not your real source files, so it isn't wired into your code yet. I couldn't open your repo, so the three edits to your existing files are written up as snippets in `INTEGRATION.md`. I also didn't diagnose your Fresher Watcher bug. If you have a coding agent with repo access, paste `docs/AGENT_PROMPT.md` into it and it will do the wiring.
+
+It covers Parts 2–11 of your master prompt (the Part 1 watcher text wasn't in what you sent) as a drop-in `app/ai_pipeline/` package.
+
+## What I ran
+- **Tests:** 134 pass, re-run from a fresh unzip.
+- **Real LaTeX:** the resume tests use real `pdflatex`, and the offline `cli demo` passes end to end.
+- **Demo routing:** an eligible job produced alerts to five destinations and PDFs to exactly the three allowed chats. The control bot got a package summary plus three approval cards, and nothing was emailed.
+
+## Not verified
+- Real Telegram, SMTP, AI provider, Hunter and search APIs were never called. They are covered by mocks.
+- Postgres/Supabase mode is untested. It only ran on SQLite here.
+- Everything outside `app/ai_pipeline/` (your `fresh_watcher.py` and so on) is untouched.
+
+## How to connect it
+1. Unzip into your repo root. It overwrites none of your files.
+2. Run `python -m app.ai_pipeline.cli demo`, then `check-config`.
+3. Make three small edits in your code:
+   - A hook call in `fresh_watcher.py` where a new job is inserted.
+   - An adapter so description fetches reuse your existing HTTP client and circuit breaker.
+   - A hook call in `/jobs/import`.
+4. Keep `AI_DRY_RUN=true` for a day and read `cli report` before going live.
+
+## Behaviour to know about
+- **Alerts replace raw alerts:** with the add-on on, the unfiltered "every new job" Telegram alert is replaced by the filtered one. With it off, your old path runs unchanged.
+- **Strict 0–2 filter:** "1–3 years" is excluded by default. Set `AI_MAX_REQUIRED_MAX_YEARS=3` to allow it.
+- **Ambiguous jobs:** a job with no experience statement, or one that contradicts itself, goes to `review` and is never alerted. A phrase like "our company has 10 years of experience" can also push a job to `review`.
+- **Resume PDFs fail closed:** they go only to chats named exactly `1 min`, `Fresher bot`, `5 min and 30 min ago`. If any of the three can't be mapped uniquely, no PDF is sent.
+- **Control bot gets no PDF:** it sees the filename and SHA-256, because you said PDFs go only to the three chats. Approve sends the exact approved file.
+- **Contacts depend on your accounts:** without a search API key and a Hunter key, you get no contacts. Nothing is made up, and free-tier quotas are capped in the code.
+- **Render has no LaTeX:** the service that builds resumes needs `deploy/Dockerfile.addon`. The approval poller must run in exactly one process.
+
+## Possible cause of the watcher bug
+Your overview says polling pauses 5, 15 or 30 minutes after a 429, but the look-back stays at `f_TPR=r120`. Any job posted during a pause would be older than 120 seconds when polling resumes, so it would never be seen. I added `freshness.catchup_lookback_seconds()` with a test for this. It's a hypothesis, so check your logs before treating it as the cause.
+
+## What I need from you
+- Your other prompt, or the watcher details, so the hook can be matched to your real code.
+- Your real LaTeX template with the `% JOBIE:BEGIN/END` marker lines added, and your referral email template.
+- The Telegram env-var names behind your three resume destinations and your control bot. `scripts/inspect_env.py` lists them.
+- Which AI provider your key belongs to, if it isn't auto-detected.

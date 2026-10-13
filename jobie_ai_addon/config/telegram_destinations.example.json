@@ -1,0 +1,32 @@
+{
+  "_help": [
+    "Copy to config/telegram_destinations.json and edit.",
+    "Tokens are NEVER written here: 'bot_token_env' / 'chat_id_env' are the NAMES of environment variables.",
+    "Run: python scripts/inspect_env.py   to list the variables your existing project already defines.",
+    "job_alerts=true  -> eligible job alerts go here (add as many destinations as you have).",
+    "resume_pdf=true  -> ONLY the three destinations named exactly '1 min', 'Fresher bot', '5 min and 30 min ago'.",
+    "If those three cannot be mapped unambiguously the resume PDFs are NOT sent (fail closed)."
+  ],
+  "destinations": [
+    {"key": "one_min",  "name": "1 min",
+     "bot_token_env": "TG_TOKEN_ONE_MIN", "chat_id_env": "TG_CHAT_ONE_MIN",
+     "job_alerts": true, "resume_pdf": true},
+    {"key": "fresher_bot", "name": "Fresher bot",
+     "bot_token_env": "TG_TOKEN_FRESHER", "chat_id_env": "TG_CHAT_FRESHER",
+     "job_alerts": true, "resume_pdf": true},
+    {"key": "five_thirty", "name": "5 min and 30 min ago",
+     "bot_token_env": "TG_TOKEN_5_30", "chat_id_env": "TG_CHAT_5_30", "thread_id_env": "TG_THREAD_5_30",
+     "job_alerts": true, "resume_pdf": true},
+    {"key": "fifteen_min", "name": "15 min",
+     "bot_token_env": "TG_TOKEN_15", "chat_id_env": "TG_CHAT_15",
+     "job_alerts": true, "resume_pdf": false},
+    {"key": "one_hour", "name": "1 hour",
+     "bot_token_env": "TG_TOKEN_1H", "chat_id_env": "TG_CHAT_1H",
+     "job_alerts": true, "resume_pdf": false}
+  ],
+  "control": {
+    "name": "Private review/control bot",
+    "bot_token_env": "TG_TOKEN_CONTROL",
+    "chat_id_env": "TG_CHAT_CONTROL"
+  }
+}

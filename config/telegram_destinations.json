@@ -1,0 +1,38 @@
+{
+  "_help": [
+    "Tokens and chat IDs are read only from environment variables.",
+    "FRESH_WATCHER_* is reserved for the 1 min destination.",
+    "The new AI bot is shared, but each destination must resolve to a unique chat."
+  ],
+  "destinations": [
+    {
+      "key": "one_min",
+      "name": "1 min",
+      "bot_token_env": "FRESH_WATCHER_BOT_TOKEN",
+      "chat_id_env": "FRESH_WATCHER_CHAT_ID",
+      "job_alerts": true,
+      "resume_pdf": true
+    },
+    {
+      "key": "fresher_bot",
+      "name": "Fresher bot",
+      "bot_token_env": "AI_TELEGRAM_BOT_TOKEN",
+      "chat_id_env": "AI_TELEGRAM_FRESHER_CHAT_ID",
+      "job_alerts": true,
+      "resume_pdf": true
+    },
+    {
+      "key": "five_thirty",
+      "name": "5 min and 30 min ago",
+      "bot_token_env": "AI_TELEGRAM_BOT_TOKEN",
+      "chat_id_env": "AI_TELEGRAM_5_30_CHAT_ID",
+      "job_alerts": true,
+      "resume_pdf": true
+    }
+  ],
+  "control": {
+    "name": "Private review/control bot",
+    "bot_token_env": "AI_TELEGRAM_BOT_TOKEN",
+    "chat_id_env": "AI_TELEGRAM_CONTROL_CHAT_ID"
+  }
+}

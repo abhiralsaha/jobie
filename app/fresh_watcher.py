@@ -52,6 +52,8 @@ from app import http_client
 from app.config import settings
 from app.db import get_connection, init_db
 from app.messaging import TelegramNotifier
+from app.ai_pipeline import hook as ai_hook
+from app.ai_pipeline.freshness import catchup_lookback_seconds
 
 # ---------------------------------------------------------------------------
 # Logger
@@ -86,13 +88,23 @@ JITTER_RANGE = 15         # +/- seconds per poll
 # HTTP layer
 # ---------------------------------------------------------------------------
 
-def fetch_page() -> str:
+def poll_lookback_seconds(now: datetime, last_success: datetime | None) -> int:
+    return catchup_lookback_seconds(
+        now,
+        last_success,
+        LOOKBACK_SECONDS,
+        cap=24 * 60 * 60,
+    )
+
+
+def fetch_page(lookback_seconds: int | None = None) -> str:
+    lookback_seconds = LOOKBACK_SECONDS if lookback_seconds is None else lookback_seconds
     return http_client.fetch(
         GUEST_SEARCH_URL,
         {
             "keywords": KEYWORDS,
             "location": LOCATION,
-            "f_TPR": f"r{LOOKBACK_SECONDS}",
+            "f_TPR": f"r{lookback_seconds}",
             "sortBy": "DD",
             "start": 0,
         },
@@ -294,6 +306,10 @@ async def run() -> None:
     await asyncio.to_thread(init_db)
     _log.info("[FreshWatcher] Database initialised OK")
 
+    if ai_hook.enabled():
+        ai_hook.set_project_http_client()
+        ai_hook.start_background()
+
     notifier = _build_notifier()
     if notifier is None:
         # Don't exit — Render would see exit-code 0 and not restart.
@@ -312,6 +328,7 @@ async def run() -> None:
     _log.info("[FreshWatcher] Status: RUNNING  |  interval=~%ds  |  lookback=%ds", POLL_INTERVAL, LOOKBACK_SECONDS)
 
     poll_count = 0
+    last_successful_poll_at: datetime | None = None
     HEARTBEAT_EVERY = 10   # log a heartbeat every N polls
 
     while True:
@@ -333,8 +350,12 @@ async def run() -> None:
             )
 
         # ── Fetch ─────────────────────────────────────────────────────────
+        lookback_seconds = poll_lookback_seconds(
+            datetime.now(timezone.utc),
+            last_successful_poll_at,
+        )
         try:
-            html = await asyncio.to_thread(fetch_page)
+            html = await asyncio.to_thread(fetch_page, lookback_seconds)
         except RuntimeError as exc:
             cooldown = http_client.trip_circuit()
             _log.error(
@@ -350,6 +371,7 @@ async def run() -> None:
         # ── Parse ─────────────────────────────────────────────────────────
         try:
             jobs = await asyncio.to_thread(parse_jobs, html)
+            last_successful_poll_at = datetime.now(timezone.utc)
         except Exception as exc:
             _log.warning("[FreshWatcher] Parse error: %s", exc)
             jobs = []
@@ -360,7 +382,18 @@ async def run() -> None:
             try:
                 if await asyncio.to_thread(is_new_job, job):
                     new_count += 1
-                    await asyncio.to_thread(send_alert, notifier, job)
+                    if ai_hook.enabled():
+                        ai_hook.on_new_job(
+                            job_id=job["job_id"],
+                            title=job.get("title") or "",
+                            company=job.get("company") or "",
+                            location=job.get("location") or "",
+                            url=job["url"],
+                            posted_at=job.get("posted_at"),
+                            source="fresh_watcher",
+                        )
+                    else:
+                        await asyncio.to_thread(send_alert, notifier, job)
             except Exception as exc:
                 _log.warning("[FreshWatcher] Error handling job %s: %s", job.get("job_id"), exc)
 

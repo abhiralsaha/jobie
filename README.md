@@ -1,8 +1,41 @@
 # Jobie
 
-Jobie is a human-review job opportunity tracker. It can monitor LinkedIn's
-public guest job-search endpoint and send Telegram notifications, or accept
-jobs from manual imports and authorized feeds. Applications remain manual.
+Jobie is a job-tracking and job-discovery application built for job seekers who want a lightweight, automated way to monitor relevant opportunities without manually checking multiple listings every day. The project continuously scans public LinkedIn job search results, filters jobs by configured keywords and location, stores them in a persistent database, and sends Telegram alerts when new matches appear. It also supports manual job submissions and authorized feed imports, making it useful both for automated discovery and for manually curated opportunities.
+
+## What this application does
+
+Jobie acts as an automated job assistant that helps a user stay on top of new opportunities. In practical terms, it does the following:
+
+- Monitors LinkedIn's public guest job-search endpoint for fresh postings that match the configured search criteria.
+- Checks jobs against a time window so only recent opportunities are considered.
+- Deduplicates jobs by ID and stores them in PostgreSQL/Supabase to avoid repeated alerts.
+- Maintains search run history, digests, and keep-alive records for operational visibility.
+- Sends Telegram notifications for new jobs, recent-job alerts, and scheduled daily or manual digests.
+- Accepts jobs from other trusted sources through its import API, including manually submitted jobs and authorized feed-based ingestion.
+- Provides a web API for health checks, fresh jobs retrieval, digest sending, and keep-alive requests.
+- Can optionally run an AI-powered screening pipeline that reads full job descriptions, validates experience fit, and prepares resume and referral workflows.
+
+## Core workflow
+
+1. The main worker queries LinkedIn using the public guest job-search endpoint.
+2. Results are parsed, validated, and filtered to recent jobs.
+3. Duplicate jobs are ignored using the database-backed deduplication layer.
+4. New jobs are stored in Postgres/Supabase and can be retrieved through the API.
+5. Telegram alerts are sent for new matches or digest summaries.
+6. If enabled, the AI pipeline checks the job description for fit, builds a tailored resume, identifies referral contacts, and drafts referral emails for review.
+7. The user manually reviews the final opportunity and applies through the actual job portal, keeping the human in the loop.
+
+## Key features
+
+- Automated LinkedIn job discovery using public search endpoints.
+- Real-time and periodic alerting via Telegram.
+- PostgreSQL/Supabase-backed persistence and deduplication.
+- Health endpoints and authenticated API routes for operational monitoring.
+- Support for import of manually obtained or authorized jobs.
+- Scheduled digest support and custom polling windows.
+- Optional AI assist for fresher/early-career job validation, resume tailoring, and referral email generation.
+- Resume template integration with LaTeX-based output and validation safeguards.
+- Retry loops, circuit breaker behavior, and rate-limit-aware HTTP handling for resilience.
 
 ## Safety boundary
 
@@ -116,3 +149,86 @@ curl.exe -X POST http://127.0.0.1:8001/jobs/import -H "Authorization: Bearer $to
 
 These safeguards reduce common risks but cannot guarantee that a host,
 dependency, messaging account, or deployment is uncompromised.
+
+## Optional AI pipeline
+
+The integrated `app.ai_pipeline` package can screen newly found jobs against
+their full descriptions, send eligible-job alerts, tailor resumes from a
+user-provided fact bank, and prepare referral email drafts for explicit
+Telegram approval. The normal watcher/API behavior remains in place while
+`AI_PIPELINE_ENABLED=false` (the default). Keep `AI_DRY_RUN=true` until the
+pipeline, Telegram destinations, resume profile, and email drafts have been
+reviewed.
+
+### Local setup
+
+Install the project requirements, copy the example assets, and edit them with
+your own resume facts and templates:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item config\resume_profile.example.json config\resume_profile.json
+Copy-Item config\referral_template.example.txt config\referral_template.txt
+Copy-Item config\company_domains.example.json config\company_domains.json
+Copy-Item templates\resume_template.tex templates\resume_template.local.tex
+```
+
+The checked-in `config/telegram_destinations.json` contains environment
+variable names only. The existing `FRESH_WATCHER_*` pair is the `1 min`
+destination; the new add-on bot uses `AI_TELEGRAM_BOT_TOKEN` and separate chat
+IDs for the other two destinations and private control chat. Add the bot to
+each chat, then set those variables in `.env` and Render. The PDF allowlist
+remains blocked until all three destinations resolve to unique chats.
+
+The resume compiler reads `templates/resume_template.tex` by default. Replace
+that template with your own LaTeX template and add its supported
+`% JOBIE:BEGIN/END <SECTION>` markers, or set `AI_RESUME_TEMPLATE_FILE` to your
+edited file. Never use the example resume facts as real candidate information.
+
+Set the AI settings in `.env` from `.env.example`:
+
+- `AI_PIPELINE_ENABLED=true` enables screening in the watcher and import API.
+- `AI_DRY_RUN=true` records Telegram/email effects without sending them.
+- Reuse an existing provider key or set `AI_PROVIDER`, `AI_API_KEY`, and
+  `AI_MODEL`. Set `AI_TELEGRAM_AUTHORIZED_USER_ID` to your numeric Telegram
+  user ID.
+- Use the existing `SUPABASE_DB_URL` for durable pipeline state, or set
+  `AI_DATABASE_URL`; SQLite is suitable only for local testing.
+- Add the bot token/chat ID environment variable pairs to the destination
+  registry. The registry contains variable **names**, never credentials.
+- Configure SMTP and optional contact-search/Hunter keys only if you want
+  those optional features.
+
+After your destination mapping is confirmed, check configuration and run the
+offline demo. The tests and demo do not send real messages or email:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.ai_pipeline.cli check-config
+.\.venv\Scripts\python.exe -m app.ai_pipeline.cli check-destinations
+.\.venv\Scripts\python.exe -m app.ai_pipeline.cli demo
+.\.venv\Scripts\python.exe -m unittest discover -s tests_ai -t .
+```
+
+Start the existing search/API worker and watcher in separate terminals as
+shown above. The watcher alone calls `start_background()` and should be the
+only service with `AI_RUN_APPROVAL_POLLER=true`. Set it to false on all other
+services. Do not configure a webhook or another `getUpdates` poller for the
+control bot. The watcher shares Jobie's existing HTTP client and rate-limit
+circuit breaker for description retrieval.
+
+### Render and resume compilation
+
+For resume generation, configure the watcher Background Worker to build from
+`deploy/Dockerfile.addon`; it includes TeX Live, `latexmk`, and Poppler. Keep
+the app/search API on its existing Python runtime if desired. Set the watcher
+start command to `python fresh_watcher_runner.py` and keep exactly one approval
+poller enabled. Supply the same durable Supabase URL and required settings to
+the processes that need them.
+
+The watcher now expands its LinkedIn query look-back after a pause or restart
+to reach back to the last successful poll (up to 24 hours). This closes the
+gap where a fixed two-minute query could miss postings during a 5/15/30-minute
+HTTP circuit-breaker cooldown; `seen_jobs` still deduplicates recovered jobs.
+
+Do not set `AI_DRY_RUN=false` until the report and manually reviewed dry-run
+results are correct, and only test an approved email using an address you own.

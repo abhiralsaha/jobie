@@ -7,3 +7,5 @@ requests==2.34.2
 beautifulsoup4==4.15.0
 tzdata==2026.5
 psycopg2-binary==2.9.13
+pypdf>=4.0
+dnspython>=2.4

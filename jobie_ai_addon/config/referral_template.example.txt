@@ -1,0 +1,12 @@
+Subject: Referral request - {{job_title}} at {{company}}
+Hi {{recipient_first_name}},
+
+I came across the {{job_title}} opening at {{company}} ({{job_url}}) and I am very interested in it. You are a {{recipient_role}} there, so I wanted to reach out directly.
+
+{{candidate_summary}} I have attached my resume, tailored to this role.
+
+Thank you for your time and for considering my request.
+
+Best regards,
+{{candidate_name}}
+{{candidate_phone}} | {{candidate_email}}

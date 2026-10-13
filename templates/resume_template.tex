@@ -1,0 +1,85 @@
+%-------------------------------------------------------------------------
+% SAMPLE one-page, ATS-friendly resume template for Jobie.
+% Replace this file with YOUR template (keep your design!) and add the
+% marker comments shown below around the parts the AI may tailor:
+%     % JOBIE:BEGIN SUMMARY   ...   % JOBIE:END SUMMARY
+%     % JOBIE:BEGIN SKILLS    ...   % JOBIE:END SKILLS
+%     % JOBIE:BEGIN EXPERIENCE ...  % JOBIE:END EXPERIENCE   (optional)
+%     % JOBIE:BEGIN PROJECTS  ...   % JOBIE:END PROJECTS
+% Everything outside the markers (header, education, fonts, margins) is
+% copied through untouched. Text is escaped automatically.
+%-------------------------------------------------------------------------
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage[utf8]{inputenc}
+% (default Computer Modern keeps this sample portable; add fontenc/lmodern or your own fonts if you prefer)
+\usepackage[margin=0.6in]{geometry}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{titlesec}
+\usepackage{tabularx}
+\usepackage[usenames,dvipsnames]{xcolor}
+\input{glyphtounicode}
+\pdfgentounicode=1
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\raggedbottom
+\raggedright
+
+\titleformat{\section}{\vspace{-4pt}\scshape\raggedright\large}{}{0em}{}[\color{black}\titlerule\vspace{-5pt}]
+
+\newcommand{\resumeItem}[1]{\item\small{#1\vspace{-2pt}}}
+\newcommand{\resumeSubheading}[4]{%
+  \item\begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+    \textbf{#1} & #2 \\
+    \textit{\small#3} & \textit{\small #4} \\
+  \end{tabular*}\vspace{-7pt}}
+\newcommand{\resumeProjectHeading}[2]{%
+  \item\begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+    \small#1 & #2 \\
+  \end{tabular*}\vspace{-7pt}}
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in,label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=0.2in]}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+\begin{document}
+
+%----------- HEADER (static: edit freely) -----------
+\begin{center}
+  {\Huge \scshape YOUR NAME} \\ \vspace{3pt}
+  \small +91-00000-00000 $|$ you@example.com $|$ linkedin.com/in/yourprofile $|$ github.com/yourhandle
+\end{center}
+
+%----------- SUMMARY -----------
+\section{Summary}
+% JOBIE:BEGIN SUMMARY
+Placeholder summary.
+% JOBIE:END SUMMARY
+
+%----------- EDUCATION (static) -----------
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading{Your University}{2022 -- 2026}{B.Tech, Computer Science}{City, India}
+  \resumeSubHeadingListEnd
+
+%----------- SKILLS -----------
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in,label={}]
+  \small{\item{
+% JOBIE:BEGIN SKILLS
+     \textbf{Languages}{: Placeholder} \\
+% JOBIE:END SKILLS
+  }}
+ \end{itemize}
+
+%----------- EXPERIENCE -----------
+% JOBIE:BEGIN EXPERIENCE
+% JOBIE:END EXPERIENCE
+
+%----------- PROJECTS -----------
+% JOBIE:BEGIN PROJECTS
+% JOBIE:END PROJECTS
+
+\end{document}

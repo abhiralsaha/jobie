@@ -6,6 +6,11 @@ __pycache__/
 .env
 *.db
 *.log
+data/
+resumes/
+config/resume_profile.json
+config/referral_template.txt
+config/company_domains.json
 playwright-report/
 test-results/
 .DS_Store

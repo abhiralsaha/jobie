@@ -1,0 +1,24 @@
+{
+  "_help": "Copy to config/resume_profile.json and replace EVERYTHING with your real facts. This is the only source the AI may draw from: it can select, order and lightly rephrase, never add. Each bullet needs a stable id like 'p1.b1'.",
+  "candidate": {"name": "Your Name", "email": "you@example.com", "phone": "+91-00000-00000",
+                "linkedin": "linkedin.com/in/yourprofile"},
+  "summary": "Computer science graduate with hands-on project experience building backend services and APIs in Python.",
+  "required_text": ["Education"],
+  "skills": {
+    "Languages": ["Python", "Java", "SQL"],
+    "Frameworks": ["FastAPI", "Flask"],
+    "Tools": ["Git", "Docker", "PostgreSQL"]
+  },
+  "experience": [],
+  "projects": [
+    {"id": "p1", "name": "Example Project One", "tech": ["Python", "FastAPI", "PostgreSQL"], "dates": "2025",
+     "bullets": [
+       {"id": "p1.b1", "text": "Built a REST API with FastAPI and PostgreSQL to track items and their status."},
+       {"id": "p1.b2", "text": "Added automated tests with pytest for the core endpoints."}
+     ]},
+    {"id": "p2", "name": "Example Project Two", "tech": ["Java", "SQL"], "dates": "2024",
+     "bullets": [
+       {"id": "p2.b1", "text": "Implemented a console application in Java backed by a SQL database."}
+     ]}
+  ]
+}

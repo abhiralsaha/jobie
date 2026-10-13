@@ -1,0 +1,17 @@
+# Render's native Python runtime has NO LaTeX. Use a Docker service (or worker) built from this
+# so tailored resumes can be compiled. Adjust the COPY/CMD lines to your project's layout.
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        texlive-latex-base texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended lmodern \
+        latexmk poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt requirements-addon.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-addon.txt
+
+COPY . .
+# Your existing start command (watcher / FastAPI). The add-on starts its own background threads
+# when your code calls ai_hook.start_background().
+CMD ["python", "fresh_watcher_runner.py"]

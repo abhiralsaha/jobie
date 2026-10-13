@@ -1,0 +1,4 @@
+{
+  "_help": "Optional: company name (lower-case) -> email domain. Overrides automatic lookup.",
+  "acme technologies": "acme.example"
+}

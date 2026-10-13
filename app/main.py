@@ -7,6 +7,7 @@ from app.job_intake import import_jobs
 from app.logging_setup import setup_logger
 from app.messaging import TelegramNotifier
 from app.security import RequestBodyLimitMiddleware, require_api_bearer_token
+from app.ai_pipeline import hook as ai_hook
 
 app = FastAPI(title="Jobie API")
 app.add_middleware(RequestBodyLimitMiddleware, max_bytes=64 * 1024)
@@ -23,6 +24,7 @@ class JobSubmission(BaseModel):
     url: HttpUrl
     posted_at: str = Field(default="", max_length=64)
     source: str = Field(default="manual", min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=30000)
 
     @field_validator("url")
     @classmethod
@@ -47,14 +49,27 @@ async def import_job(
     imported = import_jobs([job.model_dump(mode="json")])
     is_recent = posted_within_seconds(job.posted_at, settings.RECENT_JOB_WINDOW_SECONDS)
     alert_sent = False
-    if imported and is_recent:
-        try:
-            notifier.send_alert(job.title, job.company, str(job.url))
-            alert_sent = True
-        except Exception as exc:
-            logger.warning(
-                "Recent job imported but Telegram alert failed (%s)", type(exc).__name__
+    ai_pipeline_submitted = False
+    if imported:
+        if ai_hook.enabled():
+            ai_hook.set_project_http_client()
+            ai_pipeline_submitted = ai_hook.on_new_job(
+                job_id=job.job_id,
+                title=job.title,
+                company=job.company,
+                url=str(job.url),
+                posted_at=job.posted_at or None,
+                description=job.description,
+                source=job.source,
             )
+        elif is_recent:
+            try:
+                notifier.send_alert(job.title, job.company, str(job.url))
+                alert_sent = True
+            except Exception as exc:
+                logger.warning(
+                    "Recent job imported but Telegram alert failed (%s)", type(exc).__name__
+                )
 
     return {
         "status": "ok",
@@ -62,6 +77,6 @@ async def import_job(
         "duplicate": not bool(imported),
         "recent": is_recent,
         "telegram_alert_sent": alert_sent,
+        "ai_pipeline_submitted": ai_pipeline_submitted,
     }
-
 
