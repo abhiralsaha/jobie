@@ -38,13 +38,13 @@ The agent logs to the console and to `logs/agent.log` (rotates automatically). L
 
 ### Python web-app entrypoint
 For Vercel, set the project root directory to `jobie_subagent`. The
-`pyproject.toml` declares `main:app`, and `vercel.json` runs one search cycle
-through `/cron` every minute. Minute-level cron requires a Vercel plan that
-supports it; Hobby cron schedules are limited to once per day. Configure these
-environment variables in Vercel Production:
+`pyproject.toml` declares `main:app`. The repository's GitHub Actions workflow
+calls `/cron` every five minutes, which works with the Vercel Hobby plan and
+avoids depending on a persistent Vercel process. Configure these environment
+variables in Vercel Production:
 
-- `CRON_SECRET`: a long random secret. Vercel sends it as a Bearer token to the
-  cron route. The same secret protects `/test-telegram`.
+- `CRON_SECRET`: a long random secret. The same secret protects `/cron` and
+  `/test-telegram`.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `LLM_API_KEY`.
 - `SUPABASE_URL` and `SUPABASE_KEY`: required for persistent deduplication
   across serverless invocations. Create the `jobs` table with
@@ -52,11 +52,18 @@ environment variables in Vercel Production:
 - `LOOKBACK_SECONDS=300`: allows for cron scheduling delays; Supabase dedupes
   jobs found in the overlapping search windows.
 
-After deployment, test Telegram delivery by calling
-`/test-telegram` with `Authorization: Bearer <CRON_SECRET>`. The scheduled
-`/cron` route only sends Telegram messages for matching new jobs; a successful
-cycle with no qualifying jobs does not send a message. This serverless
-deployment does not run the persistent `python run.py` loop.
+In GitHub repository **Settings → Secrets and variables → Actions**, add:
+
+- Secret `CRON_SECRET`, matching the Vercel Production value.
+- Variable `VERCEL_CRON_URL`, set to the deployed Vercel domain, for example
+  `https://your-project.vercel.app` (no trailing slash required).
+
+Run **Actions → LinkedIn job agent → Run workflow** and choose `test-telegram`
+to verify Telegram delivery; choose `cron` to trigger a search immediately.
+Scheduled runs search every five minutes. They only send Telegram messages for
+new jobs that match your criteria; a successful cycle with no matches sends no
+job alert. This serverless deployment does not run the persistent
+`python run.py` loop.
 
 ## 3. Run 24/7 in production (pick one)
 
