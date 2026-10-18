@@ -14,7 +14,8 @@ from app.ai_pipeline.store import Store
 
 ROOT = Path(__file__).resolve().parent.parent
 TOKEN = lambda n: f"{100000000 + n}:" + "A" * 35  # noqa: E731
-NAMES = [("one_min", "1 min", True), ("fresher_bot", "Fresher bot", True), ("five_thirty", "5 min and 30 min ago", True),
+NAMES = [("one_min", "1 min", True), ("fresher_bot", "Fresher bot", True), ("five_min", "5 min", True),
+         ("thirty_min", "30 min", True),
          ("fifteen", "15 min", False), ("one_hour", "1 hour", False), ("ten_hours", "10 hours", False)]
 CHATS = {k: str(-1001000000000 - i) for i, (k, _, _) in enumerate(NAMES)}
 CONTROL_CHAT = "555000111"

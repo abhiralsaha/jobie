@@ -20,6 +20,8 @@ import threading
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .destinations import load_registry
 from .settings import Settings
 from .util import mask
@@ -52,8 +54,10 @@ def cmd_check_destinations(_a) -> int:
     rows = preflight(reg, TelegramClient())
     for r in rows:
         print(("OK   " if r["ok"] else "FAIL ") + r["destination"] + "  " + r["detail"])
-    print(json.dumps(reg.summary(), indent=2))
-    return 0 if all(r["ok"] for r in rows) else 1
+    summary = reg.summary()
+    print(json.dumps(summary, indent=2))
+    resume_blocked = str(summary.get("resume_destinations", "")).startswith("BLOCKED:")
+    return 0 if rows and all(r["ok"] for r in rows) and not reg.errors and not reg.unresolved() and not resume_blocked else 1
 
 
 def cmd_init_db(_a) -> int:
@@ -111,6 +115,7 @@ def cmd_worker(_a) -> int:
 
 
 def main(argv=None) -> int:
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
     ap = argparse.ArgumentParser(prog="jobie-ai")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("init-db", "check-config", "check-destinations", "worker", "demo", "report"):

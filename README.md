@@ -53,17 +53,18 @@ Jobie uses PostgreSQL/Supabase for all persistent state. Set
 database layer uses a thread-safe connection pool and creates the required
 tables at worker/API startup.
 
-There are two separate workers:
+Jobie can run in separate workers or as one combined server:
 
 1. **Main search/API worker** — `app.linkedin_fresh_jobs:app` — searches the
    configured lookback window, stores and deduplicates results, serves the
    health/search/digest endpoints, and sends scheduled or manual digests.
-2. **Ultra-fresh watcher** — `python -m app.fresh_watcher` — runs as a separate
-   process, checks the last two minutes by default, and sends immediate alerts
-   through its dedicated Telegram bot (or the main bot as fallback).
+2. **Ultra-fresh watcher** — `python -m app.fresh_watcher` — checks the last
+   two minutes by default and sends immediate alerts through its dedicated
+   Telegram bot (or the main bot as fallback). Set `FRESH_WATCHER_IN_MAIN=true`
+   to run this watcher inside the main server process instead.
 
-The separate import API is `app.main:app`. An authorized feed connector may
-post to it, but it is not a replacement for either worker.
+The authorized import API (`app.main:app`) is also mounted at `/jobs/import`
+on the main server, so a separate import API process is not required.
 
 ## Local setup (Windows PowerShell)
 
@@ -79,37 +80,45 @@ Set real values in `.env`, especially `SUPABASE_DB_URL`,
 the search settings. Keep `.env`, tokens, logs, and personal data private.
 There is no local SQLite database or `DB_PATH` setting in the current runtime.
 
-Start the two workers in separate terminals:
+### Recommended: one combined server
+
+Set `FRESH_WATCHER_IN_MAIN=true` in `.env`, then start the main server:
 
 ```powershell
-.venv\Scripts\python.exe -m uvicorn app.linkedin_fresh_jobs:app --host 127.0.0.1 --port 8000
-.venv\Scripts\python.exe -m app.fresh_watcher
+.\.venv\Scripts\python.exe -m uvicorn app.linkedin_fresh_jobs:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-The main worker's readiness endpoint is `http://127.0.0.1:8000/health`.
-The optional import API can run separately on port 8001:
+This single process runs the main LinkedIn search/digest API and fresh watcher.
+When `AI_PIPELINE_ENABLED=true` and the control bot is configured, it also runs
+the AI retry scheduler, Telegram agent, and referral approval poller. It serves
+authenticated `POST /jobs/import` in either mode. Do not run `python -m
+app.fresh_watcher` or another instance of the server at the same time. Use one
+server process/replica so the control bot has exactly one `getUpdates` poller.
 
-```powershell
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
-```
+To keep separate workers instead, leave `FRESH_WATCHER_IN_MAIN=false` and
+start the main server and `python -m app.fresh_watcher` as separate processes.
+Do not run both modes simultaneously.
 
 ## Render deployment
 
-Create two Render **Background Worker** services from this repository. Set the
-same environment variables in both services, including `SUPABASE_DB_URL` and
-the appropriate Telegram credentials.
+For the one-server setup, create one Render **Web Service** from this
+repository. Set `FRESH_WATCHER_IN_MAIN=true`, use one instance and one worker
+process, and configure the environment variables below.
 
-Main search/API worker start command:
-
-```text
-python -m uvicorn app.linkedin_fresh_jobs:app --host 0.0.0.0 --port $PORT
-```
-
-Ultra-fresh watcher start command:
+Recommended Render start command:
 
 ```text
-python -m app.fresh_watcher
+python -m uvicorn app.linkedin_fresh_jobs:app --host 0.0.0.0 --port $PORT --workers 1
 ```
+
+Set a health check path of `/health`. Use the existing Python runtime for normal
+job alerts and agent controls. If you need LaTeX resume PDFs, build the Web
+Service from `deploy/Dockerfile.addon`; it installs TeX Live and Poppler but
+does not change the app module or command.
+
+For the older two-service deployment, keep `FRESH_WATCHER_IN_MAIN=false` on
+the API service and run the watcher separately. Never enable two approval
+pollers for the same control bot.
 
 Render uses `runtime.txt` (Python 3.14.3). The main worker exposes
 `POST /keep-alive` for the repository's optional GitHub Actions keep-alive
@@ -174,11 +183,13 @@ Copy-Item templates\resume_template.tex templates\resume_template.local.tex
 ```
 
 The checked-in `config/telegram_destinations.json` contains environment
-variable names only. The existing `FRESH_WATCHER_*` pair is the `1 min`
-destination; the new add-on bot uses `AI_TELEGRAM_BOT_TOKEN` and separate chat
-IDs for the other two destinations and private control chat. Add the bot to
-each chat, then set those variables in `.env` and Render. The PDF allowlist
-remains blocked until all three destinations resolve to unique chats.
+variable names only. `FRESH_WATCHER_*` is used for both the `1 min` and
+`Fresher bot` destinations. The separate `5 min` and `30 min` destinations use
+the existing `TELEGRAM_DIGEST_5M_*` and `TELEGRAM_DIGEST_30M_*` token/chat
+pairs. `AI_TELEGRAM_BOT_TOKEN` and `AI_TELEGRAM_CONTROL_CHAT_ID` configure the
+private control bot. Add each bot to its chat, then set those variables in
+`.env` and Render. Resume-PDF delivery is fail-closed unless all four named
+destinations resolve unambiguously to unique bot/chat pairs.
 
 The resume compiler reads `templates/resume_template.tex` by default. Replace
 that template with your own LaTeX template and add its supported
@@ -197,11 +208,13 @@ Set the AI settings in `.env` from `.env.example`:
   stay allow-listed, and chat text cannot approve an email.
 - Set `AI_TELEGRAM_AUTHORIZED_USER_ID` to your numeric Telegram user ID. The
   bot also checks that messages come from its configured private control chat.
-- For GPT Luna, set `AI_PROVIDER=openai_compat`, `AI_MODEL=gpt-luna`,
-  `AI_API_KEY`, and the provider's `AI_BASE_URL` when you receive its API
-  credentials and endpoint. The current model is shared by chat and job
-  screening. The key and endpoint are not needed for deterministic slash
-  commands, but free-text AI answers and AI job screening require credentials.
+- The configured model is NVIDIA Nemotron 3 Ultra through OpenRouter:
+  `AI_PROVIDER=openrouter`, `AI_MODEL=nvidia/nemotron-3-ultra-550b-a55b`,
+  and `AI_BASE_URL=https://openrouter.ai/api/v1`. Put your OpenRouter key in
+  `AI_API_KEY` in `.env` and Render, never in `.env.example`. This model is
+  shared by free-text Telegram responses and AI job screening. The key is not
+  needed for deterministic slash commands, but AI answers and classification
+  require it. OpenRouter model availability and free-tier limits can change.
 - Use the existing `SUPABASE_DB_URL` for durable pipeline state, or set
   `AI_DATABASE_URL`; SQLite is suitable only for local testing.
 - Add the bot token/chat ID environment variable pairs to the destination
@@ -224,21 +237,17 @@ watcher with `AI_PIPELINE_ENABLED=true` and `AI_RUN_APPROVAL_POLLER=true`.
 Open the private control bot and send `/start`. The same single long-poll loop
 handles both agent messages/buttons and existing referral approval callbacks.
 
-Start the existing search/API worker and watcher in separate terminals as
-shown above. The watcher alone calls `start_background()` and should be the
-only service with `AI_RUN_APPROVAL_POLLER=true`. Set it to false on all other
-services. Do not configure a webhook or another `getUpdates` poller for the
-control bot. The watcher shares Jobie's existing HTTP client and rate-limit
-circuit breaker for description retrieval.
+In combined-server mode the in-process watcher calls `start_background()`.
+Keep `AI_RUN_APPROVAL_POLLER=true` only on this server; do not run a separate
+watcher, another approval poller, or a webhook for the control bot. The watcher
+shares Jobie's existing HTTP client and rate-limit circuit breaker for
+description retrieval.
 
 ### Render and resume compilation
 
-For resume generation, configure the watcher Background Worker to build from
-`deploy/Dockerfile.addon`; it includes TeX Live, `latexmk`, and Poppler. Keep
-the app/search API on its existing Python runtime if desired. Set the watcher
-start command to `python fresh_watcher_runner.py` and keep exactly one approval
-poller enabled. Supply the same durable Supabase URL and required settings to
-the processes that need them.
+For resume generation in the combined-server setup, configure the Web Service
+to build from `deploy/Dockerfile.addon`; it includes TeX Live, `latexmk`, and
+Poppler. Supply `SUPABASE_DB_URL` and all required settings to that service.
 
 The watcher now expands its LinkedIn query look-back after a pause or restart
 to reach back to the last successful poll (up to 24 hours). This closes the

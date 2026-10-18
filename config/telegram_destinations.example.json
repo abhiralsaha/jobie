@@ -4,7 +4,7 @@
     "Tokens are NEVER written here: 'bot_token_env' / 'chat_id_env' are the NAMES of environment variables.",
     "Run: python scripts/inspect_env.py   to list the variables your existing project already defines.",
     "job_alerts=true  -> eligible job alerts go here (add as many destinations as you have).",
-    "resume_pdf=true  -> ONLY the three destinations named exactly '1 min', 'Fresher bot', '5 min and 30 min ago'.",
+    "resume_pdf=true  -> ONLY destinations named exactly '1 min', 'Fresher bot', '5 min', and '30 min'.",
     "If those three cannot be mapped unambiguously the resume PDFs are NOT sent (fail closed)."
   ],
   "destinations": [
@@ -12,10 +12,13 @@
      "bot_token_env": "FRESH_WATCHER_BOT_TOKEN", "chat_id_env": "FRESH_WATCHER_CHAT_ID",
      "job_alerts": true, "resume_pdf": true},
     {"key": "fresher_bot", "name": "Fresher bot",
-     "bot_token_env": "AI_TELEGRAM_BOT_TOKEN", "chat_id_env": "AI_TELEGRAM_FRESHER_CHAT_ID",
+     "bot_token_env": "FRESH_WATCHER_BOT_TOKEN", "chat_id_env": "FRESH_WATCHER_CHAT_ID",
      "job_alerts": true, "resume_pdf": true},
-    {"key": "five_thirty", "name": "5 min and 30 min ago",
-     "bot_token_env": "AI_TELEGRAM_BOT_TOKEN", "chat_id_env": "AI_TELEGRAM_5_30_CHAT_ID",
+    {"key": "five_min", "name": "5 min",
+     "bot_token_env": "TELEGRAM_DIGEST_5M_BOT_TOKEN", "chat_id_env": "TELEGRAM_DIGEST_5M_CHAT_ID",
+     "job_alerts": true, "resume_pdf": true},
+    {"key": "thirty_min", "name": "30 min",
+     "bot_token_env": "TELEGRAM_DIGEST_30M_BOT_TOKEN", "chat_id_env": "TELEGRAM_DIGEST_30M_CHAT_ID",
      "job_alerts": true, "resume_pdf": true}
   ],
   "control": {

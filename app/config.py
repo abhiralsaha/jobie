@@ -50,6 +50,9 @@ class Settings:
     FRESH_WATCHER_CHAT_ID: str = os.getenv("FRESH_WATCHER_CHAT_ID", "")
     FRESH_WATCHER_INTERVAL: int = int(os.getenv("FRESH_WATCHER_INTERVAL", "60"))   # seconds
     FRESH_WATCHER_LOOKBACK: int = int(os.getenv("FRESH_WATCHER_LOOKBACK", "120"))  # 2 minutes
+    FRESH_WATCHER_IN_MAIN: bool = os.getenv("FRESH_WATCHER_IN_MAIN", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
 
     # ── HTTP client anti-fingerprinting ────────────────────────────────
     # Optional rotating proxy: http://user:pass@host:port

@@ -10,7 +10,7 @@ Before live use:
 2. Confirm each Telegram environment-variable mapping with the operator, then
    create `config/telegram_destinations.json` using variable names only.
    Resume PDFs may be routed only to destinations named `1 min`, `Fresher bot`,
-   and `5 min and 30 min ago`; leave PDF delivery blocked if any mapping is
+   `5 min`, and `30 min`; leave PDF delivery blocked if any mapping is
    unclear.
 3. Copy the example resume profile and templates to their runtime paths and
    replace every placeholder with the operator's own facts/content.

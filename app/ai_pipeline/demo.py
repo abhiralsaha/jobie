@@ -41,7 +41,8 @@ def run_demo() -> int:
                              "bullets": [{"id": "p1.b1", "text": "Built a REST API in Python backed by a SQL database."}]}]}
     (ws / "config" / "resume_profile.json").write_text(json.dumps(profile))
     shutil.copy(root / "config" / "referral_template.example.txt", ws / "config" / "referral_template.txt")
-    names = [("one_min", "1 min", True), ("fresher_bot", "Fresher bot", True), ("five_thirty", "5 min and 30 min ago", True),
+    names = [("one_min", "1 min", True), ("fresher_bot", "Fresher bot", True), ("five_min", "5 min", True),
+             ("thirty_min", "30 min", True),
              ("fifteen", "15 min", False), ("hourly", "1 hour", False)]
     env = {"AI_PROVIDER": "anthropic", "AI_API_KEY": "demo", "AI_TELEGRAM_AUTHORIZED_USER_ID": "1", "AI_MIN_DESC_CHARS": "120",
            "TOK_control": "100000099:" + "A" * 35, "CHAT_control": "555000111"}

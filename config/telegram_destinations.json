@@ -1,8 +1,8 @@
 {
   "_help": [
     "Tokens and chat IDs are read only from environment variables.",
-    "FRESH_WATCHER_* is reserved for the 1 min destination.",
-    "The new AI bot is shared, but each destination must resolve to a unique chat."
+    "FRESH_WATCHER_* serves the 1 min and Fresher bot destinations.",
+    "Existing TELEGRAM_DIGEST_5M_* and TELEGRAM_DIGEST_30M_* pairs serve the 5 min and 30 min destinations."
   ],
   "destinations": [
     {
@@ -16,16 +16,24 @@
     {
       "key": "fresher_bot",
       "name": "Fresher bot",
-      "bot_token_env": "AI_TELEGRAM_BOT_TOKEN",
-      "chat_id_env": "AI_TELEGRAM_FRESHER_CHAT_ID",
+      "bot_token_env": "FRESH_WATCHER_BOT_TOKEN",
+      "chat_id_env": "FRESH_WATCHER_CHAT_ID",
       "job_alerts": true,
       "resume_pdf": true
     },
     {
-      "key": "five_thirty",
-      "name": "5 min and 30 min ago",
-      "bot_token_env": "AI_TELEGRAM_BOT_TOKEN",
-      "chat_id_env": "AI_TELEGRAM_5_30_CHAT_ID",
+      "key": "five_min",
+      "name": "5 min",
+      "bot_token_env": "TELEGRAM_DIGEST_5M_BOT_TOKEN",
+      "chat_id_env": "TELEGRAM_DIGEST_5M_CHAT_ID",
+      "job_alerts": true,
+      "resume_pdf": true
+    },
+    {
+      "key": "thirty_min",
+      "name": "30 min",
+      "bot_token_env": "TELEGRAM_DIGEST_30M_BOT_TOKEN",
+      "chat_id_env": "TELEGRAM_DIGEST_30M_CHAT_ID",
       "job_alerts": true,
       "resume_pdf": true
     }

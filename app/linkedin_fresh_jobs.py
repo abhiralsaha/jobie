@@ -623,6 +623,18 @@ async def lifespan(app: FastAPI):
     app.state.last_digest_sent_at = None
     app.state.last_rolling_digest_checked_at = {}
     task = asyncio.create_task(poll_loop(digest_timezone, digest_time))
+    watcher_tasks = []
+    if settings.FRESH_WATCHER_IN_MAIN:
+        from app import fresh_watcher
+
+        app.state.fresh_watcher_in_main = True
+        watcher_tasks = [
+            asyncio.create_task(fresh_watcher.run(), name="fresh-watcher"),
+            asyncio.create_task(fresh_watcher._prune_loop(), name="fresh-watcher-prune"),
+        ]
+        logger.info("Fresh watcher is running inside the main server process")
+    else:
+        app.state.fresh_watcher_in_main = False
 
     # Keep-alive agent: pings this service every 14 min so Render free-tier
     # never sees it as idle and spins it down.
@@ -636,10 +648,16 @@ async def lifespan(app: FastAPI):
     finally:
         keepalive.stop()
         task.cancel()
+        for watcher_task in watcher_tasks:
+            watcher_task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
+        if watcher_tasks:
+            await asyncio.gather(*watcher_tasks, return_exceptions=True)
+            if ai_hook.enabled():
+                ai_hook.stop_background()
 
 
 app = FastAPI(title="LinkedIn Fresh Jobs API", lifespan=lifespan)
@@ -791,3 +809,9 @@ async def send_digest_now(authorization: str | None = Header(default=None)) -> d
         "job_count": len(jobs),
         "message_count": len(message_ids),
     }
+
+
+# Keep the authorized import API available on this same server process.
+from app.main import app as import_api
+
+app.mount("/", import_api, name="job-import-api")

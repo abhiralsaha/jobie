@@ -41,8 +41,8 @@ class EndToEnd(unittest.TestCase):
         self.run_job(job("1001"))
         self.assertEqual(self.store.get_job("1001")["stage"], "done")
         alert_chats = {c["payload"]["chat_id"] for c in self.tg.sent("sendMessage")} - {CONTROL_CHAT}
-        self.assertEqual(alert_chats, set(CHATS.values()))                          # all six job-alert destinations
-        self.assertEqual(pdf_chats(self.tg), {CHATS["one_min"], CHATS["fresher_bot"], CHATS["five_thirty"]})
+        self.assertEqual(alert_chats, set(CHATS.values()))                          # all seven job-alert destinations
+        self.assertEqual(pdf_chats(self.tg), {CHATS["one_min"], CHATS["fresher_bot"], CHATS["five_min"], CHATS["thirty_min"]})
         self.assertEqual(len(self.tg.sent("sendMessage", CONTROL_CHAT)), 4)         # package summary + 3 approval requests
         drafts = self.store.query("SELECT slot, state, to_email FROM ai_email_drafts ORDER BY slot")
         self.assertEqual([(d["slot"], d["state"]) for d in drafts], [("hr", "pending"), ("senior_swe", "pending"), ("swe", "pending")])
@@ -111,14 +111,14 @@ class EndToEnd(unittest.TestCase):
         pipe, tg, mailer, store, s = make_pipeline(Path(tempfile.mkdtemp()), llm=ScriptedLLM(fn))
         pipe.submit(job("1001")); pipe.wait_idle(60)
         self.assertEqual(store.get_job("1001")["stage"], "package_pending")
-        self.assertEqual(len(tg.sent("sendMessage")) , 6)                           # alerts went out
+        self.assertEqual(len(tg.sent("sendMessage")) , 7)                           # alerts went out
         self.assertEqual(tg.sent("sendDocument"), [])                               # no stale/fake resume sent
         down["v"] = False
         store.update_job("1001", utcnow(), next_attempt_at=iso(utcnow()))
         pipe.tick(); pipe.wait_idle(60)
         self.assertEqual(store.get_job("1001")["stage"], "done")
         alert_msgs = [c for c in tg.sent("sendMessage") if c["payload"]["chat_id"] != CONTROL_CHAT]
-        self.assertEqual(len(alert_msgs), 6)                                        # alerts not repeated
+        self.assertEqual(len(alert_msgs), 7)                                        # alerts not repeated
 
     def test_ambiguous_resume_allowlist_sends_no_pdf_and_reports_it(self):
         d = dest_data(); d["destinations"] = [x for x in d["destinations"] if x["name"] != "1 min"]
@@ -148,7 +148,7 @@ class EndToEnd(unittest.TestCase):
         pipe.submit(job("2")); pipe.wait_idle(60)
         self.assertEqual(len(store.query("SELECT DISTINCT job_id FROM ai_email_drafts")), 1)
         self.assertEqual(store.get_job("2")["stage"], "done")
-        self.assertEqual(len(tg.sent("sendDocument")), 6)
+        self.assertEqual(len(tg.sent("sendDocument")), 8)
 
     def test_concurrent_submissions_of_the_same_job_are_processed_once(self):
         results = []
@@ -156,7 +156,7 @@ class EndToEnd(unittest.TestCase):
         [t.start() for t in ts]; [t.join() for t in ts]
         self.pipe.wait_idle(60)
         self.assertEqual(results.count(True), 1)
-        self.assertEqual(len([c for c in self.tg.sent("sendMessage") if c["payload"]["chat_id"] != CONTROL_CHAT]), 6)
+        self.assertEqual(len([c for c in self.tg.sent("sendMessage") if c["payload"]["chat_id"] != CONTROL_CHAT]), 7)
 
 
 class FetchBehaviour(unittest.TestCase):

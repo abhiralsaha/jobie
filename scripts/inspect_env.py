@@ -42,7 +42,7 @@ def main():
         kind = "token?" if re.search(r"TOKEN", n, re.I) else "chat/channel id?" if re.search(r"CHAT|CHANNEL", n, re.I) else "other"
         print(f"  {n:<44} {kind:<18} in {', '.join(sorted(found[n]))}")
     print("\nNext: copy config/telegram_destinations.example.json -> config/telegram_destinations.json and put these NAMES in")
-    print("bot_token_env / chat_id_env for each destination you call '1 min', 'Fresher bot', '5 min and 30 min ago', etc.")
+    print("bot_token_env / chat_id_env for each destination you call '1 min', 'Fresher bot', '5 min', '30 min', etc.")
     print("Then run: python -m app.ai_pipeline.cli check-destinations   (verifies access without sending anything)")
     return 0
 

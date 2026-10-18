@@ -1,8 +1,8 @@
 """Telegram destination registry + the fail-closed resume-PDF allowlist.
 
 Tokens are NEVER stored in the JSON file; the file names the *environment
-variables* that hold them. Resume PDFs may only go to the three destinations
-named in ``RESUME_DESTINATION_NAMES``; if they cannot be mapped unambiguously
+variables* that hold them. Resume PDFs may only go to the destinations named
+in ``RESUME_DESTINATION_NAMES``; if they cannot be mapped unambiguously
 ``resume_destinations()`` raises ``AllowlistError`` and nothing is sent.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-RESUME_DESTINATION_NAMES = ("1 min", "Fresher bot", "5 min and 30 min ago")
+RESUME_DESTINATION_NAMES = ("1 min", "Fresher bot", "5 min", "30 min")
 _TOKEN_RE = re.compile(r"^\d{5,15}:[A-Za-z0-9_-]{30,60}$")
 _CHAT_RE = re.compile(r"^(-?\d{5,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$")
 

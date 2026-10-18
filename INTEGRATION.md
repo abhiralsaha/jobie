@@ -29,6 +29,12 @@ under `jobie_ai_addon/` as the unmodified input copy.
 - The main LinkedIn search worker also routes newly found jobs through the AI
   pipeline when enabled, rather than sending its raw alert. Its new-job records
   are processed by the existing watcher-side retry scheduler.
+- Set `FRESH_WATCHER_IN_MAIN=true` to run the main search/API, fresh watcher,
+  Telegram agent, and approval poller in the single
+  `app.linkedin_fresh_jobs:app` server process. That app mounts the existing
+  authorized import route at `/jobs/import`. In this mode do not run the
+  standalone watcher, optional separate import API, multiple Uvicorn workers,
+  or multiple Render replicas.
 
 ## Required operator setup
 
@@ -37,14 +43,16 @@ under `jobie_ai_addon/` as the unmodified input copy.
    placeholder resume/profile/email content with your own.
 3. Create `config/telegram_destinations.json` using the real environment
    variable names for each Telegram bot/chat. Resume PDFs are fail-closed and
-   may go only to the three destinations named exactly `1 min`, `Fresher bot`,
-   and `5 min and 30 min ago`.
+   may go only to the destinations named exactly `1 min`, `Fresher bot`,
+   `5 min`, and `30 min`.
 4. Set `AI_DRY_RUN=true`, the AI provider/key/model (or reuse a supported
    existing key), your numeric `AI_TELEGRAM_AUTHORIZED_USER_ID`, durable
    `AI_DATABASE_URL`/`SUPABASE_DB_URL`, and any optional SMTP/contact keys.
-5. On Render, use `deploy/Dockerfile.addon` for the watcher if it must compile
-   resumes. Enable the approval poller on that watcher only. Never configure a
-   second poller or webhook for the control bot.
+5. For a single Render server set `FRESH_WATCHER_IN_MAIN=true`, use the
+   `app.linkedin_fresh_jobs:app` command with one Uvicorn worker and one
+   instance, and do not deploy a separate watcher/import API. Use
+   `deploy/Dockerfile.addon` if resumes must compile. Never configure a second
+   poller or webhook for the control bot.
 6. For GPT Luna, set `AI_PROVIDER=openai_compat`, `AI_MODEL=gpt-luna`,
    `AI_API_KEY`, and the provider-supplied `AI_BASE_URL`. Until credentials are
    present, slash-command agent functions work, but free-text answers and
@@ -53,12 +61,12 @@ under `jobie_ai_addon/` as the unmodified input copy.
    `python -m app.ai_pipeline.cli check-destinations`, and the unit tests before
    enabling the live pipeline.
 
-The operator confirmed that `FRESH_WATCHER_BOT_TOKEN` and
-`FRESH_WATCHER_CHAT_ID` are reserved for the `1 min` destination. The addon
-registry uses the new `AI_TELEGRAM_BOT_TOKEN` for `Fresher bot`,
-`5 min and 30 min ago`, and the private control bot, with separate chat IDs
-for each. Blank placeholders for the new bot are in the local `.env` and
-`.env.example`; PDF delivery remains blocked until the bot and all three
-unique chat IDs are configured and verified.
+The operator assigned `FRESH_WATCHER_BOT_TOKEN` and `FRESH_WATCHER_CHAT_ID`
+to both `1 min` and `Fresher bot`, and identified existing
+`TELEGRAM_DIGEST_5M_*` and `TELEGRAM_DIGEST_30M_*` pairs for the separate `5
+min` and `30 min` destinations. The private control bot uses
+`AI_TELEGRAM_BOT_TOKEN` and `AI_TELEGRAM_CONTROL_CHAT_ID`. Telegram access can
+be checked without sending a message. Resume-PDF delivery remains blocked
+until all four resume destinations resolve to unique bot/chat pairs.
 
 See the AI pipeline section in `README.md` for local and Render start commands.

@@ -118,7 +118,7 @@ class ApprovalService:
             return row["state"] if row else "unknown"                  # already requested/decided: idempotent
         e = html.escape
         resume_line = (f"Resume: <code>{e(Path(d.resume_path).name)}</code> sha256 {e(d.resume_sha256[:12])} "
-                       "(the PDF itself went to the three resume destinations)")
+                       "(the PDF itself went to the approved resume destinations)")
         head = (f"<b>\U0001F4E8 Referral e-mail - {e(SLOT_LABEL[c.slot])}</b>\n<b>{e(job.title)}</b> @ {e(job.company)}\n{e(job.url)}\n"
                 f"Job ID <code>{e(job.job_id)}</code>\n\n<b>To:</b> {e(c.name)} - {e(c.position)} @ {e(c.company)}\n"
                 f"<b>Email:</b> {e(d.to_email or 'none')} [{e(c.email_status)}]\nProfile: {e(c.profile_url)}\n{resume_line}")

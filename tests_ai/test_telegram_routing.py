@@ -25,10 +25,11 @@ def registry(data=None, env=None):
 
 
 class AllowlistTests(unittest.TestCase):
-    def test_exactly_the_three_named_destinations_resolve(self):
+    def test_exactly_the_four_named_destinations_resolve(self):
         got = registry().resume_destinations()
         self.assertEqual([d.name for d in got], list(RESUME_DESTINATION_NAMES))
-        self.assertEqual({d.chat_id for d in got}, {CHATS["one_min"], CHATS["fresher_bot"], CHATS["five_thirty"]})
+        self.assertEqual({d.chat_id for d in got},
+                         {CHATS["one_min"], CHATS["fresher_bot"], CHATS["five_min"], CHATS["thirty_min"]})
 
     def test_fails_closed_when_a_name_is_missing(self):
         d = dest_data()
@@ -56,11 +57,11 @@ class AllowlistTests(unittest.TestCase):
             registry(dest_data(flags)).resume_destinations()
 
     def test_fails_closed_when_credentials_are_missing(self):
-        env = env_for(); del env["TOK_five_thirty"]
+        env = env_for(); del env["TOK_thirty_min"]
         reg = registry(env=env)
         with self.assertRaises(AllowlistError):
             reg.resume_destinations()
-        self.assertTrue(any("5 min" in u for u in reg.unresolved()))
+        self.assertTrue(any("30 min" in u for u in reg.unresolved()))
 
     def test_fails_closed_when_two_names_map_to_the_same_chat(self):
         env = env_for(); env["CHAT_fresher_bot"] = env["CHAT_one_min"]; env["TOK_fresher_bot"] = env["TOK_one_min"]
@@ -86,9 +87,9 @@ class RoutingTests(unittest.TestCase):
         self.reg = registry()
         self.dv = Deliverer(self.store, self.tg, self.reg)
 
-    def test_alert_goes_to_every_job_alert_destination_not_just_three(self):
+    def test_alert_goes_to_every_job_alert_destination(self):
         rep = self.dv.send_alerts(JOB, CLS)
-        self.assertEqual(len(rep.sent), 6)
+        self.assertEqual(len(rep.sent), 7)
         self.assertEqual({c["payload"]["chat_id"] for c in self.tg.sent("sendMessage")}, set(CHATS.values()))
         self.assertNotIn("555000111", {c["payload"]["chat_id"] for c in self.tg.sent("sendMessage")})   # control bot gets no alerts
 
@@ -103,13 +104,14 @@ class RoutingTests(unittest.TestCase):
             self.dv.send_alerts(JOB, Classification("77", "review", "unclear"))
         self.assertEqual(self.tg.calls, [])
 
-    def test_pdf_goes_only_to_the_three_and_never_elsewhere(self):
+    def test_pdf_goes_only_to_the_four_and_never_elsewhere(self):
         pdf = Path(tempfile.mkdtemp()) / "r.pdf"; pdf.write_bytes(b"%PDF-1.4 " + b"x" * 3000 + b"\n%%EOF")
         from app.ai_pipeline.util import sha256_file
         res = {"status": "ok", "pdf_path": str(pdf), "pdf_sha256": sha256_file(pdf), "filename": "r.pdf"}
         self.dv.send_resume(JOB, CLS, res)
         docs = {c["payload"]["chat_id"] for c in self.tg.sent("sendDocument")}
-        self.assertEqual(docs, {CHATS["one_min"], CHATS["fresher_bot"], CHATS["five_thirty"]})
+        self.assertEqual(docs,
+                         {CHATS["one_min"], CHATS["fresher_bot"], CHATS["five_min"], CHATS["thirty_min"]})
         cap = self.tg.sent("sendDocument")[0]["payload"]["caption"]
         for needle in ("Software Engineer I", "Acme &amp; Sons", "https://example.com/jobs/77", "r.pdf"):
             self.assertIn(needle, cap)
@@ -143,7 +145,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(sorted(rep.failed), ["fifteen", "ten_hours"])
         self.assertIn("blocked", rep.failed["fifteen"])
         self.assertIn("chat not found", rep.failed["ten_hours"])
-        self.assertEqual(len(rep.sent), 4)
+        self.assertEqual(len(rep.sent), 5)
         rows = {r["dest_key"]: r for r in self.store.deliveries("77", "alert")}
         self.assertEqual(rows["fifteen"]["status"], "failed")
         self.assertEqual(rows["one_min"]["status"], "sent")
@@ -151,12 +153,12 @@ class RoutingTests(unittest.TestCase):
         before = len(self.tg.sent("sendMessage"))
         rep2 = self.dv.send_alerts(JOB, CLS)
         self.assertEqual(sorted(rep2.sent), ["fifteen", "ten_hours"])
-        self.assertEqual(len(rep2.already_sent), 4)
+        self.assertEqual(len(rep2.already_sent), 5)
         self.assertEqual(len(self.tg.sent("sendMessage")) - before, 2)             # only the two failed ones were re-sent
         per_chat = {}
         for c in self.tg.sent("sendMessage"):
             per_chat[c["payload"]["chat_id"]] = per_chat.get(c["payload"]["chat_id"], 0) + 1
-        for key in ("one_min", "fresher_bot", "five_thirty", "one_hour"):       # succeeded first time: exactly one message
+        for key in ("one_min", "fresher_bot", "five_min", "thirty_min", "one_hour"):  # one delivery per destination
             self.assertEqual(per_chat[CHATS[key]], 1, key)
         for key in ("fifteen", "ten_hours"):                                   # one failed attempt + one successful retry
             self.assertEqual(per_chat[CHATS[key]], 2, key)
@@ -165,7 +167,7 @@ class RoutingTests(unittest.TestCase):
         import threading
         ts = [threading.Thread(target=self.dv.send_alerts, args=(JOB, CLS)) for _ in range(6)]
         [t.start() for t in ts]; [t.join() for t in ts]
-        self.assertEqual(len(self.tg.sent("sendMessage")), 6)
+        self.assertEqual(len(self.tg.sent("sendMessage")), 7)
 
 
 class TransportTests(unittest.TestCase):
