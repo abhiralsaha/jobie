@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 import os
 import random
@@ -225,11 +226,6 @@ def main():
 
 
 class AgentApplication:
-    def __init__(self):
-        self.agent = None
-        self.stop = None
-        self.worker = None
-
     async def __call__(self, scope, receive, send):
         if scope["type"] == "lifespan":
             await self._lifespan(receive, send)
@@ -237,60 +233,93 @@ class AgentApplication:
         if scope["type"] != "http":
             raise RuntimeError(f"Unsupported ASGI scope type: {scope['type']}")
 
-        if scope["method"] in ("GET", "HEAD") and scope["path"] in ("/", "/health"):
+        method = scope["method"]
+        path = scope["path"]
+        if method == "GET" and path in ("/cron", "/test-telegram"):
+            if not await self._authorize_cron(scope, send):
+                return
+            if path == "/cron":
+                await self._run_cycle(send)
+            else:
+                await self._test_telegram(send)
+            return
+
+        if method in ("GET", "HEAD") and path in ("/", "/health"):
             age = int(time.time() - health.STATE["last_cycle"]) if health.STATE["last_cycle"] else -1
             body = (
                 f"ok cycles={health.STATE['cycles']} alerts={health.STATE['alerts']} "
                 f"last_cycle_age_s={age}\n"
-            ).encode()
+            )
             status = 200
         else:
-            body = b"Not found\n"
+            body = "Not found\n"
             status = 404
+        await self._respond(send, status, body, method != "HEAD")
 
-        headers = [(b"content-type", b"text/plain; charset=utf-8")]
-        headers.append((b"content-length", str(len(body)).encode()))
-        if scope["method"] != "HEAD":
-            response_body = body
+    async def _authorize_cron(self, scope, send):
+        secret = os.getenv("CRON_SECRET", "").strip()
+        if not secret:
+            await self._respond(send, 503, "CRON_SECRET is not configured\n")
+            return False
+        headers = {name.lower(): value for name, value in scope.get("headers", [])}
+        authorization = headers.get(b"authorization", b"").decode("latin-1")
+        if not hmac.compare_digest(authorization, "Bearer " + secret):
+            await self._respond(send, 401, "Unauthorized\n")
+            return False
+        return True
+
+    async def _run_cycle(self, send):
+        cfg = cfgmod.load()
+        if not cfg.supabase_url or not cfg.supabase_key:
+            await self._respond(
+                send,
+                503,
+                "Supabase is required for durable job deduplication. Configure "
+                "SUPABASE_URL and SUPABASE_KEY.\n",
+            )
+            return
+        configure_logging(cfg)
+        agent = Agent(cfg)
+        try:
+            await agent.cycle()
+        finally:
+            await agent.close()
+        await self._respond(send, 200, "Search cycle complete\n")
+
+    async def _test_telegram(self, send):
+        cfg = cfgmod.load()
+        configure_logging(cfg)
+        telegram = Telegram(cfg.telegram_token, cfg.telegram_chat_id)
+        try:
+            sent = await telegram.send("✅ LinkedIn Job Agent Telegram test succeeded.")
+        finally:
+            await telegram.close()
+        if sent:
+            await self._respond(send, 200, "Telegram test message sent\n")
         else:
-            response_body = b""
+            await self._respond(send, 502, "Telegram rejected or could not deliver the test message\n")
+
+    @staticmethod
+    async def _respond(send, status, body, include_body=True):
+        encoded = body.encode()
+        headers = [
+            (b"content-type", b"text/plain; charset=utf-8"),
+            (b"content-length", str(len(encoded)).encode()),
+        ]
         await send({"type": "http.response.start", "status": status, "headers": headers})
-        await send({"type": "http.response.body", "body": response_body})
+        await send({
+            "type": "http.response.body",
+            "body": encoded if include_body else b"",
+        })
 
     async def _lifespan(self, receive, send):
         while True:
             message = await receive()
             if message["type"] == "lifespan.startup":
-                cfg = cfgmod.load()
-                configure_logging(cfg)
-                self.stop = asyncio.Event()
-                self.agent = Agent(cfg)
-                self.worker = asyncio.create_task(self.agent.run(self.stop))
-                self.worker.add_done_callback(self._worker_finished)
                 await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
-                try:
-                    if self.stop is not None:
-                        self.stop.set()
-                    if self.worker is not None:
-                        await self.worker
-                finally:
-                    if self.agent is not None:
-                        await self.agent.close()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
-
-    @staticmethod
-    def _worker_finished(worker):
-        if worker.cancelled():
-            return
-        error = worker.exception()
-        if error is not None:
-            log.error(
-                "Job agent stopped unexpectedly: %s",
-                error,
-                exc_info=(type(error), error, error.__traceback__),
-            )
 
 
 app = AgentApplication()

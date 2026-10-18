@@ -37,11 +37,26 @@ python run.py
 The agent logs to the console and to `logs/agent.log` (rotates automatically). Logs include search progress, results, processing stages, errors, and durations. Health check: http://localhost:8080
 
 ### Python web-app entrypoint
-For Vercel, set the project root directory to `jobie_subagent`. Its
-`pyproject.toml` declares `main:app`, with a root-level module forwarding to
-this ASGI app. The `/` and `/health` routes report the agent's health, and the
-agent starts and stops with the ASGI server lifecycle. The standalone
-`python run.py` command remains available for local and container deployments.
+For Vercel, set the project root directory to `jobie_subagent`. The
+`pyproject.toml` declares `main:app`, and `vercel.json` runs one search cycle
+through `/cron` every minute. Minute-level cron requires a Vercel plan that
+supports it; Hobby cron schedules are limited to once per day. Configure these
+environment variables in Vercel Production:
+
+- `CRON_SECRET`: a long random secret. Vercel sends it as a Bearer token to the
+  cron route. The same secret protects `/test-telegram`.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `LLM_API_KEY`.
+- `SUPABASE_URL` and `SUPABASE_KEY`: required for persistent deduplication
+  across serverless invocations. Create the `jobs` table with
+  [`supabase/schema.sql`](supabase/schema.sql).
+- `LOOKBACK_SECONDS=300`: allows for cron scheduling delays; Supabase dedupes
+  jobs found in the overlapping search windows.
+
+After deployment, test Telegram delivery by calling
+`/test-telegram` with `Authorization: Bearer <CRON_SECRET>`. The scheduled
+`/cron` route only sends Telegram messages for matching new jobs; a successful
+cycle with no qualifying jobs does not send a message. This serverless
+deployment does not run the persistent `python run.py` loop.
 
 ## 3. Run 24/7 in production (pick one)
 
