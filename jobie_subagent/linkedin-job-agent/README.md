@@ -36,6 +36,12 @@ python run.py
 ```
 The agent logs to the console and to `logs/agent.log` (rotates automatically). Logs include search progress, results, processing stages, errors, and durations. Health check: http://localhost:8080
 
+### Python web-app entrypoint
+For platforms that expect an importable Python web app, use the ASGI entrypoint
+`app.main:app`. Its `/` and `/health` routes report the agent's health, and the
+agent starts and stops with the ASGI server lifecycle. The standalone `python run.py`
+command remains available for local and container deployments.
+
 ## 3. Run 24/7 in production (pick one)
 
 ### A) Docker on a VPS (recommended — cheapest & most reliable)

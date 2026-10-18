@@ -224,5 +224,77 @@ def main():
     asyncio.run(amain())
 
 
+class AgentApplication:
+    def __init__(self):
+        self.agent = None
+        self.stop = None
+        self.worker = None
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            await self._lifespan(receive, send)
+            return
+        if scope["type"] != "http":
+            raise RuntimeError(f"Unsupported ASGI scope type: {scope['type']}")
+
+        if scope["method"] in ("GET", "HEAD") and scope["path"] in ("/", "/health"):
+            age = int(time.time() - health.STATE["last_cycle"]) if health.STATE["last_cycle"] else -1
+            body = (
+                f"ok cycles={health.STATE['cycles']} alerts={health.STATE['alerts']} "
+                f"last_cycle_age_s={age}\n"
+            ).encode()
+            status = 200
+        else:
+            body = b"Not found\n"
+            status = 404
+
+        headers = [(b"content-type", b"text/plain; charset=utf-8")]
+        headers.append((b"content-length", str(len(body)).encode()))
+        if scope["method"] != "HEAD":
+            response_body = body
+        else:
+            response_body = b""
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": response_body})
+
+    async def _lifespan(self, receive, send):
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                cfg = cfgmod.load()
+                configure_logging(cfg)
+                self.stop = asyncio.Event()
+                self.agent = Agent(cfg)
+                self.worker = asyncio.create_task(self.agent.run(self.stop))
+                self.worker.add_done_callback(self._worker_finished)
+                await send({"type": "lifespan.startup.complete"})
+            elif message["type"] == "lifespan.shutdown":
+                try:
+                    if self.stop is not None:
+                        self.stop.set()
+                    if self.worker is not None:
+                        await self.worker
+                finally:
+                    if self.agent is not None:
+                        await self.agent.close()
+                await send({"type": "lifespan.shutdown.complete"})
+                return
+
+    @staticmethod
+    def _worker_finished(worker):
+        if worker.cancelled():
+            return
+        error = worker.exception()
+        if error is not None:
+            log.error(
+                "Job agent stopped unexpectedly: %s",
+                error,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+
+
+app = AgentApplication()
+
+
 if __name__ == "__main__":
     main()
