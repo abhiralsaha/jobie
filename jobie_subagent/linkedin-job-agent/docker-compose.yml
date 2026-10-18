@@ -1,0 +1,14 @@
+services:
+  job-agent:
+    build: .
+    container_name: linkedin-job-agent
+    env_file: .env
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
