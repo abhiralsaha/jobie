@@ -36,34 +36,17 @@ python run.py
 ```
 The agent logs to the console and to `logs/agent.log` (rotates automatically). Logs include search progress, results, processing stages, errors, and durations. Health check: http://localhost:8080
 
-### Python web-app entrypoint
-For Vercel, set the project root directory to `jobie_subagent`. The
-`pyproject.toml` declares `main:app`. The repository's GitHub Actions workflow
-calls `/cron` every five minutes, which works with the Vercel Hobby plan and
-avoids depending on a persistent Vercel process. Configure these environment
-variables in Vercel Production:
+### Render Background Worker (continuous polling)
+The root [`render.yaml`](../../render.yaml) defines a Render Background Worker
+with this directory as its root and `python run.py` as its start command. Create
+a Blueprint in Render using the repository's root `render.yaml`; Render will
+build and start the worker from `jobie_subagent/linkedin-job-agent`.
 
-- `CRON_SECRET`: a long random secret. The same secret protects `/cron` and
-  `/test-telegram`.
-- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `LLM_API_KEY`.
-- `SUPABASE_URL` and `SUPABASE_KEY`: required for persistent deduplication
-  across serverless invocations. Create the `jobs` table with
-  [`supabase/schema.sql`](supabase/schema.sql).
-- `LOOKBACK_SECONDS=300`: allows for cron scheduling delays; Supabase dedupes
-  jobs found in the overlapping search windows.
-
-In GitHub repository **Settings → Secrets and variables → Actions**, add:
-
-- Secret `CRON_SECRET`, matching the Vercel Production value.
-- Variable `VERCEL_CRON_URL`, set to the deployed Vercel domain, for example
-  `https://your-project.vercel.app` (no trailing slash required).
-
-Run **Actions → LinkedIn job agent → Run workflow** and choose `test-telegram`
-to verify Telegram delivery; choose `cron` to trigger a search immediately.
-Scheduled runs search every five minutes. They only send Telegram messages for
-new jobs that match your criteria; a successful cycle with no matches sends no
-job alert. This serverless deployment does not run the persistent
-`python run.py` loop.
+Add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `LLM_API_KEY` when Render
+prompts for the secret environment variables. The Blueprint provisions a
+persistent disk for the SQLite deduplication database and sets the default
+poll interval to 60 seconds. A paid Render Worker plan is required for
+continuous operation.
 
 ## 3. Run 24/7 in production (pick one)
 

@@ -1,0 +1,32 @@
+services:
+  - type: worker
+    name: linkedin-job-agent
+    runtime: python
+    plan: starter
+    rootDir: jobie_subagent/linkedin-job-agent
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    autoDeploy: true
+    disk:
+      name: linkedin-job-agent-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: claude-haiku-5-5
+      - key: KEYWORDS
+        value: full stack developer
+      - key: LOCATIONS
+        value: Gurgaon,Noida,Bengaluru
+      - key: DB_PATH
+        value: /opt/render/project/src/data/jobs.db
+      - key: LOOKBACK_SECONDS
+        value: "300"
