@@ -200,9 +200,20 @@ class FetchBehaviour(unittest.TestCase):
         self.assertEqual(tg.calls, [])
 
     def test_hard_fetch_error_is_recorded(self):
-        pipe, tg, m, store, s, f = self.pipe(FetchError("HTTP 404"))
+        pipe, tg, m, store, s, f = self.pipe(FetchError("HTTP 404", retryable=False))
         pipe.submit(job("9", desc=None)); pipe.wait_idle(10)
         self.assertIn("HTTP 404", store.get_job("9")["last_error"])
+        self.assertEqual(store.get_job("9")["stage"], "review")
+        self.assertEqual(store.get_job("9")["attempts"], 0)
+
+    def test_non_retryable_bad_request_moves_job_to_review_without_retries(self):
+        pipe, tg, m, store, s, f = self.pipe(FetchError("HTTP 400", retryable=False))
+        pipe.submit(job("10", desc=None)); pipe.wait_idle(10)
+        row = store.get_job("10")
+        self.assertEqual(row["stage"], "review")
+        self.assertEqual(row["attempts"], 0)
+        self.assertIn("HTTP 400", row["last_error"])
+        self.assertEqual(tg.calls, [])
 
 
 class DescriptionFetcherTests(unittest.TestCase):

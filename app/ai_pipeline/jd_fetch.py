@@ -30,7 +30,9 @@ class FetchRateLimited(Exception):
 
 
 class FetchError(Exception):
-    pass
+    def __init__(self, message: str, *, retryable: bool = True):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def extract_description_from_html(html: str) -> str:
@@ -83,7 +85,8 @@ class DescriptionFetcher:
             ra = r.headers.get("Retry-After", "")
             raise FetchRateLimited(float(ra) if ra.isdigit() else 0.0)
         if r.status_code != 200:
-            raise FetchError(f"HTTP {r.status_code}")
+            retryable = not (400 <= r.status_code < 500)
+            raise FetchError(f"HTTP {r.status_code}", retryable=retryable)
         return r.text
 
     def fetch(self, job_id: str) -> tuple[str, bool]:

@@ -62,7 +62,15 @@ class Deliverer:
             raise ValueError("refusing to alert for a job that is not an 'include' classification")
         rep = DeliveryReport()
         blocks = format_alert_blocks(job, c, self.now())
-        for d in self.registry.job_alert_destinations():
+        destinations = self.registry.job_alert_destinations()
+        if not destinations:
+            reason = "no usable job-alert destinations are configured"
+            rep.failed["configuration"] = reason
+            log.error("alert job=%s FAILED: %s", job.job_id, reason)
+            for unresolved in self.registry.unresolved():
+                log.error("destination not usable: %s", unresolved)
+            return rep
+        for d in destinations:
             if not self.store.claim_delivery(job.job_id, "alert", d.key, self.now()):
                 rep.already_sent.append(d.key)
                 continue
@@ -77,6 +85,8 @@ class Deliverer:
                 log.error("alert job=%s dest=%s FAILED: %s", job.job_id, d.label(), msg)
         for k in self.registry.unresolved():
             log.error("destination not usable: %s", k)
+        if not rep.failed:
+            log.info("alert job=%s delivered to %d destination(s)", job.job_id, len(rep.sent))
         return rep
 
     def send_resume(self, job: Job, c: Classification, resume: dict) -> DeliveryReport:

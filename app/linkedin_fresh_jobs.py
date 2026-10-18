@@ -542,10 +542,15 @@ async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
                 if not posted_within_seconds(
                     job.get("posted_at") or "", settings.RECENT_JOB_WINDOW_SECONDS
                 ):
-                    continue
+                        logger.info(
+                            "Job %s not submitted for alerting: posting is outside the %ds freshness window",
+                            job["job_id"],
+                            settings.RECENT_JOB_WINDOW_SECONDS,
+                        )
+                        continue
                 if ai_hook.enabled():
                     ai_hook.set_project_http_client()
-                    ai_hook.on_new_job(
+                    submitted = ai_hook.on_new_job(
                         job_id=job["job_id"],
                         title=job.get("title") or "",
                         company=job.get("company") or "",
@@ -553,6 +558,11 @@ async def poll_loop(digest_timezone: ZoneInfo, digest_time) -> None:
                         url=job["url"],
                         posted_at=job.get("posted_at"),
                         source="linkedin_search",
+                    )
+                    logger.info(
+                        "Job %s %s to AI screening",
+                        job["job_id"],
+                        "queued" if submitted else "was already queued",
                     )
                     continue
                 try:

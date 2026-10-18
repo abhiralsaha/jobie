@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def get_logger(name: str) -> logging.Logger:
-    return logging.getLogger(f"jobie_ai.{name}")
+    return logging.getLogger(f"jobie.{name}")
 
 
 def utcnow() -> datetime:

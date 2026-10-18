@@ -52,8 +52,10 @@ class Pipeline:
             "posted_at": job.posted_at, "description": desc, "desc_hash": desc_hash(desc) if desc else None,
             "desc_complete": bool(desc and is_complete(desc, self.s.min_desc_chars)), "source": job.source}, self.now())
         if not new:
+            log.info("job=%s already queued for AI screening", job.job_id)
             return False
         self._enqueue(job.job_id)
+        log.info("job=%s queued for full-description AI screening", job.job_id)
         return True
 
     def _enqueue(self, job_id: str) -> None:
@@ -143,7 +145,23 @@ class Pipeline:
                 self._fail_attempt(job_id, f"description fetch rate-limited ({rl})", delay=rl.retry_after)
                 return
             except FetchError as exc:
-                self._fail_attempt(job_id, f"description fetch failed: {exc}")
+                error = f"description fetch failed: {exc}"
+                if exc.retryable:
+                    self._fail_attempt(job_id, error)
+                else:
+                    self.classifier.classify(job, None, False)
+                    self.store.update_job(
+                        job_id,
+                        self.now(),
+                        stage="review",
+                        last_error=error[:500],
+                        next_attempt_at=None,
+                    )
+                    log.warning(
+                        "job=%s moved to review after non-retryable description fetch failure: %s",
+                        job_id,
+                        exc,
+                    )
                 return
             self.store.update_job(job_id, self.now(), description=desc, desc_hash=desc_hash(desc), desc_complete=1 if complete else 0)
             if not complete:
@@ -164,6 +182,8 @@ class Pipeline:
             return
         stage = {"include": "alerts_pending", "exclude": "excluded"}.get(c.decision, "review")
         self.store.update_job(job_id, self.now(), stage=stage, last_error=None)
+        log.info("job=%s AI screening decision=%s next_stage=%s reason=%s",
+                 job_id, c.decision, stage, c.reason[:160])
 
     def _classification(self, job_id: str) -> Classification:
         r = self.store.latest_classification(job_id)
@@ -181,6 +201,8 @@ class Pipeline:
         if rep.failed:
             self._fail_attempt(job_id, "alert delivery failed for: " + "; ".join(f"{k}: {v}" for k, v in rep.failed.items()))
             return
+        log.info("job=%s Telegram alert stage complete: sent=%d already_sent=%d",
+                 job_id, len(rep.sent), len(rep.already_sent))
         self.store.update_job(job_id, self.now(), stage="package_pending", attempts=0, last_error=None, next_attempt_at=None)
 
     def _stage_package(self, job_id: str) -> None:

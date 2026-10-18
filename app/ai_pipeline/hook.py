@@ -103,7 +103,10 @@ def set_project_http_client() -> None:
             raise FetchRateLimited(cooldown) from exc
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "unknown"
-            raise FetchError(f"HTTP {status}") from exc
+            retryable = not (
+                isinstance(status, int) and 400 <= status < 500 and status != 429
+            )
+            raise FetchError(f"HTTP {status}", retryable=retryable) from exc
 
     set_http_get(http_get)
 
@@ -127,9 +130,16 @@ def start_background(*, run_poller: bool | None = None, tick_interval: float = 3
             return
     p = get_pipeline()
     log.info(
-        "AI job screening enabled: full descriptions, experience limit 0-%g years",
+        "AI job screening enabled: full descriptions, experience limit 0-%g years, dry_run=%s",
         p.s.max_required_max_years,
+        p.s.dry_run,
     )
+    destinations = p.deliverer.registry.job_alert_destinations()
+    log.info("AI job-alert routing: %d usable Telegram destination(s)", len(destinations))
+    for issue in p.deliverer.registry.unresolved():
+        log.error("AI job-alert destination is not usable: %s", issue)
+    if not destinations:
+        log.error("AI-screened jobs cannot be delivered until a job-alert destination is configured")
     p.recover()
     stop = _state["stop"]
     sched = FixedRateScheduler(p.tick, tick_interval, name="ai-retry")

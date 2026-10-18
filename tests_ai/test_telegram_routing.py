@@ -104,6 +104,13 @@ class RoutingTests(unittest.TestCase):
             self.dv.send_alerts(JOB, Classification("77", "review", "unclear"))
         self.assertEqual(self.tg.calls, [])
 
+    def test_alert_fails_explicitly_when_no_job_alert_destinations_are_usable(self):
+        empty = load_registry(data={"destinations": []}, env={})
+        report = Deliverer(self.store, self.tg, empty).send_alerts(JOB, CLS)
+        self.assertIn("configuration", report.failed)
+        self.assertFalse(report.complete)
+        self.assertEqual(self.tg.calls, [])
+
     def test_pdf_goes_only_to_the_four_and_never_elsewhere(self):
         pdf = Path(tempfile.mkdtemp()) / "r.pdf"; pdf.write_bytes(b"%PDF-1.4 " + b"x" * 3000 + b"\n%%EOF")
         from app.ai_pipeline.util import sha256_file

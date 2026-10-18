@@ -51,6 +51,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from app import http_client
 from app.config import settings
 from app.db import get_connection, init_db
+from app.logging_setup import setup_logger
 from app.messaging import TelegramNotifier
 from app.ai_pipeline import hook as ai_hook
 from app.ai_pipeline.freshness import catchup_lookback_seconds
@@ -328,6 +329,7 @@ async def _prune_loop() -> None:
 # ---------------------------------------------------------------------------
 
 async def run() -> None:
+    setup_logger()
     # ── Startup banner ────────────────────────────────────────────────────
     _log.info("=" * 65)
     _log.info("  Fresh Watcher 24/7 Worker  —  STARTING UP")
@@ -411,12 +413,13 @@ async def run() -> None:
 
         # ── Dedup & alert ─────────────────────────────────────────────────
         new_count = 0
+        ai_queued_count = 0
         for job in jobs:
             try:
                 if await asyncio.to_thread(is_new_job, job):
                     new_count += 1
                     if ai_hook.enabled():
-                        ai_hook.on_new_job(
+                        submitted = ai_hook.on_new_job(
                             job_id=job["job_id"],
                             title=job.get("title") or "",
                             company=job.get("company") or "",
@@ -425,6 +428,12 @@ async def run() -> None:
                             posted_at=job.get("posted_at"),
                             source="fresh_watcher",
                         )
+                        ai_queued_count += int(submitted)
+                        if not submitted:
+                            _log.warning(
+                                "[FreshWatcher] New job_id=%s was not queued for AI screening",
+                                job["job_id"],
+                            )
                     else:
                         await asyncio.to_thread(send_alert, notifier, job)
             except Exception as exc:
@@ -433,9 +442,10 @@ async def run() -> None:
         # ── Sleep with jitter ─────────────────────────────────────────────
         sleep_for = max(10, POLL_INTERVAL + random.uniform(-JITTER_RANGE, JITTER_RANGE))
         _log.info(
-            "[FreshWatcher] Poll #%d done — %d on page, %d new alert(s) fired | "
+            "[FreshWatcher] Poll #%d done — %d on page, %d new job(s) discovered, "
+            "%d queued for AI screening | "
             "next poll in %.0fs",
-            poll_count, len(jobs), new_count, sleep_for,
+            poll_count, len(jobs), new_count, ai_queued_count, sleep_for,
         )
         await asyncio.sleep(sleep_for)
 
