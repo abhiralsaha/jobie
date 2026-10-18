@@ -1,0 +1,2 @@
+[tool.vercel]
+entrypoint = "linkedin-job-agent.app.main:app"
