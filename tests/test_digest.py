@@ -50,9 +50,12 @@ class DigestTests(unittest.TestCase):
             setattr(settings, f"TELEGRAM_DIGEST_{suffix}_CHAT_ID", str(987654320 + index))
         worker.app.state.last_rolling_digest_checked_at = {}
         worker.new_jobs_buffer.clear()
+        self.ai_enabled_patch = patch.object(worker.ai_hook, "enabled", return_value=False)
+        self.ai_enabled_patch.start()
 
     def tearDown(self):
         self.connection_patch.stop()
+        self.ai_enabled_patch.stop()
         settings.MANUAL_DIGEST_MAX_PER_DAY = self.original_max
         settings.MANUAL_DIGEST_COOLDOWN_SECONDS = self.original_cooldown
         for name, value in self.original_rolling.items():
@@ -72,6 +75,31 @@ class DigestTests(unittest.TestCase):
         self.add_job("old", now - timedelta(hours=30))
         jobs = worker.get_recent_digest_jobs(now, 24 * 3600)
         self.assertEqual([job["job_id"] for job in jobs], ["recent"])
+
+    def test_ai_enabled_digest_includes_only_ai_approved_jobs(self):
+        now = datetime.now(timezone.utc)
+        eligible = {
+            "job_id": "eligible",
+            "title": "Junior Engineer",
+            "company": "Example Co",
+            "url": "https://www.linkedin.com/jobs/view/eligible",
+            "posted_at": (now - timedelta(hours=1)).isoformat(),
+        }
+
+        class ScreenedStore:
+            def query(self, sql):
+                self.sql = sql
+                return [eligible]
+
+        store = ScreenedStore()
+        with patch.object(worker.ai_hook, "enabled", return_value=True), patch.object(
+            worker.ai_hook, "get_pipeline", return_value=type("PipelineStub", (), {"store": store})()
+        ):
+            jobs = worker.get_recent_digest_jobs(now, 24 * 3600)
+
+        self.assertEqual([job["job_id"] for job in jobs], ["eligible"])
+        self.assertIn("c.prompt_version = 'v2'", store.sql)
+        self.assertIn("c.decision = 'include'", store.sql)
 
     def test_empty_or_invalid_digest_sends_no_message(self):
         notifier = TelegramNotifier()

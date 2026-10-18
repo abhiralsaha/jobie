@@ -18,3 +18,4 @@ class LLMRequestTests(unittest.TestCase):
         self.assertEqual(url, "https://openrouter.ai/api/v1/chat/completions")
         self.assertEqual(headers["Authorization"], "Bearer test-secret")
         self.assertEqual(body["model"], "test-model")
+        self.assertEqual(body["response_format"], {"type": "json_object"})

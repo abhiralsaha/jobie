@@ -171,11 +171,11 @@ class FetchBehaviour(unittest.TestCase):
         f = self.Fetcher(behaviour)
         return make_pipeline(Path(tempfile.mkdtemp()), llm=ScriptedLLM(lambda s, u: LLMError("should not be called")), fetcher=f) + (f,)
 
-    def test_title_prefilter_avoids_fetching_and_ai(self):
-        pipe, tg, m, store, s, f = self.pipe(("x", True))
+    def test_senior_title_still_fetches_the_full_description_for_ai(self):
+        pipe, tg, m, store, s, f = self.pipe(("x" * 120, True))
         pipe.submit(job("9", "Senior Software Engineer", None)); pipe.wait_idle(10)
-        self.assertEqual(f.calls, [])
-        self.assertEqual(store.get_job("9")["stage"], "excluded")
+        self.assertEqual(f.calls, ["9"])
+        self.assertEqual(store.get_job("9")["stage"], "discovered")
 
     def test_rate_limited_fetch_defers_the_job_without_alerting(self):
         pipe, tg, m, store, s, f = self.pipe(FetchRateLimited(120))

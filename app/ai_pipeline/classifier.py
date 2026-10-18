@@ -22,8 +22,7 @@ from .store import Store
 from .util import clean_text, get_logger, norm_text, utcnow
 
 log = get_logger("classifier")
-PROMPT_VERSION = "v1"
-MAX_PROMPT_CHARS = 16000
+PROMPT_VERSION = "v2"
 
 
 class ClassificationUnavailable(Exception):
@@ -64,12 +63,9 @@ Schema:
 
 
 def build_user_prompt(job: Job, description: str) -> str:
-    d = description
-    if len(d) > MAX_PROMPT_CHARS:           # keep head and tail; requirements are often at the end
-        d = d[:12000] + "\n[...middle omitted...]\n" + d[-4000:]
     # NOTE: posting time is deliberately NOT sent, so it cannot be confused with experience.
     return (f"job_id: {job.job_id}\ntitle: {job.title}\ncompany: {job.company}\n"
-            f"description_length_chars: {len(description)}\n<description>\n{d}\n</description>")
+            f"description_length_chars: {len(description)}\n<description>\n{description}\n</description>")
 
 
 # ------------------------------------------------- deterministic experience read
@@ -319,12 +315,6 @@ class JobClassifier:
                                source="precondition")
             self._persist(job, dh, "precondition", c, {})
             return c
-        reason = pre_screen(description, self.s.max_required_min_years)
-        if reason:
-            c = Classification(job.job_id, "exclude", reason, source="prescreen")
-            self._persist(job, dh, "prescreen", c, {})
-            return c
-
         cached = self.store.get_classification(job.job_id, dh, PROMPT_VERSION)
         if cached and cached.get("raw_json"):
             raw = json.loads(cached["raw_json"])           # no new AI spend; policy is re-applied
@@ -337,6 +327,12 @@ class JobClassifier:
 
     def _ask_ai(self, job: Job, description: str) -> dict:
         user = build_user_prompt(job, description)
+        log.info(
+            "sending full job description to AI for 0-%g year screening job=%s chars=%d",
+            self.s.max_required_max_years,
+            job.job_id,
+            len(description),
+        )
         problems: list[str] = []
         for attempt in range(2):                           # one corrective retry for malformed output
             prompt = user if not problems else user + "\n\nYour previous answer was invalid: " + "; ".join(problems) + \

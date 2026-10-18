@@ -133,12 +133,10 @@ class Pipeline:
     def _stage_classify(self, job_id: str) -> None:
         row = self.store.get_job(job_id)
         job = Job.from_row(row)
-        early = self.classifier.classify_title(job)
-        if early:
-            self.store.update_job(job_id, self.now(), stage="excluded", last_error=None)
-            return
         desc, complete = row.get("description"), bool(row.get("desc_complete"))
         if not complete:
+            log.info("fetching full job description for 0-%g year AI screening job=%s",
+                     self.s.max_required_max_years, job_id)
             try:
                 desc, complete = self.fetcher.fetch(job_id)
             except FetchRateLimited as rl:
@@ -149,6 +147,7 @@ class Pipeline:
                 return
             self.store.update_job(job_id, self.now(), description=desc, desc_hash=desc_hash(desc), desc_complete=1 if complete else 0)
             if not complete:
+                log.warning("job=%s full description unavailable or truncated; AI screening deferred", job_id)
                 attempts = self.store.get_job(job_id)["attempts"] + 1
                 if attempts >= self.s.max_job_attempts:           # out of attempts: unverified, never alertable
                     self.classifier.classify(job, desc, False)    # records the 'not verified' audit row

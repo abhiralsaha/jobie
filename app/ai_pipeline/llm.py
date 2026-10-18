@@ -83,7 +83,7 @@ class LLMClient:
         if p in {"openai", "groq", "openrouter", "openai_compat"}:
             body = {"model": model, "temperature": 0, "max_tokens": max_tokens,
                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-            if p in {"openai", "groq"}:
+            if p in {"openai", "groq", "openrouter", "openai_compat"}:
                 body["response_format"] = {"type": "json_object"}
             return (self.s.ai_base_url.rstrip("/") + "/chat/completions",
                     {"Authorization": f"Bearer {key}", "content-type": "application/json"}, body)

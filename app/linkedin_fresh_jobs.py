@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from app import http_client
 from app.ai_pipeline import hook as ai_hook
+from app.ai_pipeline.settings import Settings as AIScreeningSettings
 from app.config import settings
 from app.db import get_connection, init_db
 from app.freshness import parse_timestamp, posted_within_seconds
@@ -216,13 +217,24 @@ def get_recent_digest_jobs(
     now = now or datetime.now(timezone.utc)
     lookback_seconds = LOOKBACK_SECONDS if lookback_seconds is None else lookback_seconds
     jobs = []
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT job_id, title, company, url, posted_at FROM seen_jobs "
-                "WHERE url IS NOT NULL AND posted_at IS NOT NULL"
-            )
-            rows = cur.fetchall()
+    if ai_hook.enabled():
+        rows = ai_hook.get_pipeline().store.query(
+            "SELECT job_id, title, company, url, posted_at FROM ai_jobs "
+            "WHERE stage IN ('alerts_pending', 'package_pending', 'done') "
+            "AND EXISTS ("
+            "SELECT 1 FROM ai_classifications c "
+            "WHERE c.job_id = ai_jobs.job_id AND c.desc_hash = ai_jobs.desc_hash "
+            "AND c.prompt_version = 'v2' AND c.decision = 'include')"
+        )
+        logger.info("AI-screened digest contains %d eligible job(s)", len(rows))
+    else:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT job_id, title, company, url, posted_at FROM seen_jobs "
+                    "WHERE url IS NOT NULL AND posted_at IS NOT NULL"
+                )
+                rows = cur.fetchall()
     for row in rows:
         posted_at = parse_timestamp(row["posted_at"])
         if posted_at is None:
@@ -614,6 +626,12 @@ async def lifespan(app: FastAPI):
 
     # Initialise Supabase schema
     await asyncio.to_thread(init_db)
+    ai_settings = AIScreeningSettings.from_env()
+    if ai_settings.enabled:
+        logger.info(
+            "AI screening enabled for new jobs: full descriptions, experience limit 0-%g years",
+            ai_settings.max_required_max_years,
+        )
 
     app.state.digest_timezone = digest_timezone
     app.state.worker_started_at = datetime.now(timezone.utc).isoformat()

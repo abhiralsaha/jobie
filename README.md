@@ -169,6 +169,13 @@ Telegram approval. The normal watcher/API behavior remains in place while
 pipeline, Telegram destinations, resume profile, and email drafts have been
 reviewed.
 
+The AI screening prompt includes the complete retrieved job description
+without trimming its middle. Descriptions that cannot be retrieved in full are
+not eligible for alerts. Set `AI_MAX_REQUIRED_MIN_YEARS=2` and
+`AI_MAX_REQUIRED_MAX_YEARS=2` to limit alerts to roles suitable for candidates
+with 0-2 years of experience; the classifier logs the screening limit and
+description character count without logging the description itself.
+
 ### Local setup
 
 Install the project requirements, copy the example assets, and edit them with

@@ -126,6 +126,10 @@ def start_background(*, run_poller: bool | None = None, tick_interval: float = 3
         if _state["threads"]:
             return
     p = get_pipeline()
+    log.info(
+        "AI job screening enabled: full descriptions, experience limit 0-%g years",
+        p.s.max_required_max_years,
+    )
     p.recover()
     stop = _state["stop"]
     sched = FixedRateScheduler(p.tick, tick_interval, name="ai-retry")
