@@ -7,6 +7,8 @@ __pycache__/
 *.db
 *.log
 data/
+!app/ai_pipeline/data/
+!app/ai_pipeline/data/tech_lexicon.txt
 resumes/
 config/resume_profile.json
 config/referral_template.txt
