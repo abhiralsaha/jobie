@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 try:
     from dotenv import load_dotenv
@@ -37,6 +38,8 @@ class Config:
     title_blocklist: list[str]
     supabase_url: str
     supabase_key: str
+    keepalive_url: str
+    keepalive_interval: int
     port: int
     log_level: str
 
@@ -44,6 +47,21 @@ class Config:
 def load() -> Config:
     provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
     default_model = "claude-haiku-5-5" if provider == "anthropic" else "gpt-4o-mini"
+    keepalive_url = os.getenv("KEEPALIVE_URL", "https://jobie-2.onrender.com").strip()
+    try:
+        parsed_keepalive_url = urlsplit(keepalive_url)
+        keepalive_port = parsed_keepalive_url.port
+    except ValueError as exc:
+        raise SystemExit("KEEPALIVE_URL must be a valid HTTP or HTTPS URL") from exc
+    if (
+        parsed_keepalive_url.scheme not in ("http", "https")
+        or not parsed_keepalive_url.hostname
+        or (keepalive_port is not None and not 1 <= keepalive_port <= 65535)
+    ):
+        raise SystemExit("KEEPALIVE_URL must be a valid HTTP or HTTPS URL")
+    keepalive_interval = int(os.getenv("KEEPALIVE_INTERVAL_SECONDS", "780"))
+    if keepalive_interval < 1:
+        raise SystemExit("KEEPALIVE_INTERVAL_SECONDS must be greater than zero")
     return Config(
         telegram_token=_req("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=_req("TELEGRAM_CHAT_ID"),
@@ -62,6 +80,8 @@ def load() -> Config:
             "TITLE_BLOCKLIST", "senior,sr.,lead,staff,principal,architect,manager,head of,director,vp,intern")],
         supabase_url=_req("SUPABASE_URL"),
         supabase_key=_req("SUPABASE_KEY"),
+        keepalive_url=keepalive_url,
+        keepalive_interval=keepalive_interval,
         port=int(os.getenv("PORT", "8080")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

@@ -25,6 +25,9 @@ python run.py
 You get "✅ Job agent started" on Telegram. Health check: http://localhost:8080
 At startup, the agent makes one small LLM verification request and logs whether the configured
 provider returned a parseable response. Each real job analysis is also logged separately.
+The same worker also sends two HTTP GET keep-alive requests to
+`https://jobie-2.onrender.com` at startup and every 13 minutes. This is an HTTP ping, not a
+browser click; it runs in the background for as long as `python run.py` is running.
 
 ## 3. Run 24/7
 **Docker on a VPS (recommended)**
@@ -52,6 +55,8 @@ Free web services sleep and will stop a 1-minute poller. Since the DB is Supabas
 | `LLM_PROVIDER` | `anthropic` or an OpenAI-compatible provider such as `openrouter` |
 | `LLM_MODEL` | Model identifier supported by the configured provider |
 | `LLM_BASE_URL` | API base URL for OpenAI-compatible providers (OpenRouter: `https://openrouter.ai/api/v1`) |
+| `KEEPALIVE_URL` | URL to ping (default `https://jobie-2.onrender.com`) |
+| `KEEPALIVE_INTERVAL_SECONDS` | Seconds between keep-alive batches (default `780`, or 13 minutes) |
 | `POLL_INTERVAL_SECONDS` | default 60 |
 | `LOOKBACK_SECONDS` | default 120 (= last 2 min); overlap is safe thanks to the DB |
 | `MAX_MIN_YEARS` | pass if the job's *minimum* experience ≤ this (default 2) |

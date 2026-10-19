@@ -8,6 +8,7 @@ import httpx
 
 from . import config as cfgmod
 from . import health
+from .keepalive import KeepAlive
 from .linkedin import LinkedIn, Job, RateLimited
 from .llm import LLM, Verdict
 from .storage import Store
@@ -179,10 +180,16 @@ async def amain():
             signal.signal(sig, lambda *_: stop.set())
     server = await health.start(cfg.port)
     agent = Agent(cfg)
+    keepalive = KeepAlive(cfg.keepalive_url, cfg.keepalive_interval)
+    keepalive_task = asyncio.create_task(
+        keepalive.run(stop), name="backend-job-agent-keepalive"
+    )
     try:
         await agent.run(stop)
     finally:
+        stop.set()
         server.close()
+        await keepalive_task
         await agent.close()
         log.info("Shut down cleanly")
 
