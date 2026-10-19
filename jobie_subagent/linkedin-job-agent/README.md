@@ -35,6 +35,8 @@ cp .env.example .env              # then edit .env with your 3 values
 python run.py
 ```
 The agent logs to the console and to `logs/agent.log` (rotates automatically). Logs include search progress, results, processing stages, errors, and durations. Health check: http://localhost:8080
+On startup, the worker also sends two HTTP GET requests to `https://jobie-1.onrender.com`,
+then repeats the pair every 13 minutes. These are page requests, not browser clicks.
 
 ## 3. Run 24/7 in production (pick one)
 
@@ -58,8 +60,8 @@ journalctl -u linkedin-job-agent -f
 ### C) Render
 Use a **Background Worker** on a paid plan (`render.yaml` included, with a 1 GB disk).
 Free web services sleep after inactivity and will stop a 1-minute poller — don't use free tier for 24/7.
-If you must use a free web service, ping `https://<your-app>.onrender.com/` every 5 min with UptimeRobot
-(and note free disks are wiped on restart, so a few jobs may repeat after redeploys).
+The keep-alive requests do not guarantee continuous availability; the hosting plan must support a
+continuously running worker, and the target service may still be restarted or sleep according to its plan.
 
 ## Config (.env)
 | Var | Meaning |
@@ -72,6 +74,8 @@ If you must use a free web service, ping `https://<your-app>.onrender.com/` ever
 | `KEYWORDS` | comma list, e.g. `full stack developer,mern stack developer` |
 | `LOCATIONS` | comma list of cities |
 | `POLL_INTERVAL_SECONDS` | default 60 |
+| `KEEPALIVE_URL` | URL receiving two HTTP GET requests on startup and every 13 minutes (default `https://jobie-1.onrender.com`) |
+| `KEEPALIVE_INTERVAL_SECONDS` | delay between keep-alive request pairs (default 780) |
 | `LOOKBACK_SECONDS` | default 120 (= "posted in last 2 min"); overlap is safe, duplicates are blocked by the DB |
 | `MAX_MIN_YEARS` | job passes if its *minimum* required experience ≤ this (default 2) |
 | `UNSPECIFIED_EXPERIENCE` | `skip` (default) or `send` when a post states no experience |

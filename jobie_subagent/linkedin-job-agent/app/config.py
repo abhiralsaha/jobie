@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 try:
     from dotenv import load_dotenv
@@ -35,6 +36,8 @@ class Config:
     max_min_years: float
     unspecified: str
     title_blocklist: list[str]
+    keepalive_url: str
+    keepalive_interval: int
     db_path: str
     supabase_url: str | None
     supabase_key: str | None
@@ -59,6 +62,22 @@ def load() -> Config:
             "Copy it from your project's API Keys settings."
         )
 
+    keepalive_interval = int(os.getenv("KEEPALIVE_INTERVAL_SECONDS", "780"))
+    if keepalive_interval < 1:
+        raise SystemExit("KEEPALIVE_INTERVAL_SECONDS must be greater than zero")
+    keepalive_url = os.getenv("KEEPALIVE_URL", "https://jobie-1.onrender.com").strip()
+    try:
+        parsed_keepalive_url = urlsplit(keepalive_url)
+        keepalive_port = parsed_keepalive_url.port
+    except ValueError:
+        raise SystemExit("KEEPALIVE_URL must be a valid HTTP or HTTPS URL")
+    if (
+        parsed_keepalive_url.scheme not in ("http", "https")
+        or not parsed_keepalive_url.hostname
+        or (keepalive_port is not None and not 1 <= keepalive_port <= 65535)
+    ):
+        raise SystemExit("KEEPALIVE_URL must be a valid HTTP or HTTPS URL")
+
     return Config(
         telegram_token=_req("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=_req("TELEGRAM_CHAT_ID"),
@@ -75,6 +94,8 @@ def load() -> Config:
         unspecified=os.getenv("UNSPECIFIED_EXPERIENCE", "skip").lower(),
         title_blocklist=[x.lower() for x in _list(
             "TITLE_BLOCKLIST", "senior,sr.,lead,staff,principal,architect,manager,head of,director,vp,intern")],
+        keepalive_url=keepalive_url,
+        keepalive_interval=keepalive_interval,
         db_path=os.getenv("DB_PATH", "data/jobs.db"),
         supabase_url=supabase_url,
         supabase_key=supabase_key,
